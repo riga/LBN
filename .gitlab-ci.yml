@@ -1,0 +1,29 @@
+stages:
+  - lint
+  - test
+
+lint:
+  stage: lint
+  tags:
+    - docker
+  image: tensorflow/tensorflow:latest
+  script:
+    - export PATH="$PATH:/root/.local/bin"
+    - pip install flake8 --user
+    - flake8 lbn.py test.py setup.py
+
+unittests_py2:
+  stage: test
+  tags:
+    - docker
+  image: tensorflow/tensorflow:latest
+  script:
+    - python -m unittest test
+
+unittests_py3:
+  stage: test
+  tags:
+    - docker
+  image: tensorflow/tensorflow:latest-py3
+  script:
+    - python -m unittest test
