@@ -265,7 +265,7 @@ class LBN(object):
             with tf.variable_scope("particles"):
                 self.build_combinations("particle", self.n_particles)
 
-            # rest frames are not build for COMBINATIONS boost mode
+            # rest frames are not built for COMBINATIONS boost mode
             if self.boost_mode != self.COMBINATIONS:
                 with tf.variable_scope("restframes"):
                     self.build_combinations("restframe", self.n_restframes)
@@ -480,8 +480,8 @@ class LBN(object):
         """
         Builds the output features. *features* should be a list of feature names as registered to
         the :py:attr:`feature_factory` instance. When *None*, the default features
-        ``["E", "px", "py", "pz"]`` are build. *external_features* can be a list of tensors of
-        externally produced features, that are concatenated to the build features and are, e.g.,
+        ``["E", "px", "py", "pz"]`` are built. *external_features* can be a list of tensors of
+        externally produced features, that are concatenated to the built features and are, e.g.,
         subject to the internal batch normalization.
         """
         # default to reshaped 4-vector elements
@@ -523,8 +523,8 @@ class LBN(object):
 
 class FeatureFactoryBase(object):
     """
-    Base class of the feature factory. It does not implemented actual features but rather the
-    feature wrapping and tensor caching functionality. So-called hidden features are subject to
+    Base class of the feature factory. It does not implement actual features but rather the
+    feature wrapping and tensor caching functionality. So-called hidden features are also subject to
     caching but are not supposed to be accessed by the LBN. They rather provide intermediate results
     that are used in multiple places and retained for performance purposes.
     """
@@ -556,7 +556,7 @@ class FeatureFactoryBase(object):
         """
         Wraps and registers a feature function. It ensures that the stored function is bound to this
         instance. *name* defaults to the actual function name. When *hidden* is *None*, the decision
-        is inferred from whether the feature name starts with an underscore.
+        is inferred from whether *name* starts with an underscore.
         """
         if not name:
             name = func.__name__
@@ -588,7 +588,7 @@ class FeatureFactoryBase(object):
     def _wrap_features(self):
         """
         Interprets all non-excluded instance methods as feature functions and replaces them by
-        caching-aware wrappers.
+        caching-aware wrappers using :py:meth:`_wrap_feature`.
         """
         # loop through attributes
         for name in dir(self):
@@ -607,7 +607,7 @@ class FeatureFactoryBase(object):
 
 class FeatureFactory(FeatureFactoryBase):
     """
-    Default feature factory implementing a bunch of feature mappings.
+    Default feature factory implementing various generic feature mappings.
     """
 
     def __init__(self, lbn):
