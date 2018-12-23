@@ -1,7 +1,7 @@
 # coding: utf-8
 
 """
-Lorentz Boost Network (LBN) implementation using TensorFlow.
+TensorFlow implementation of the Lorentz Boost Network (LBN).
 For more information, see https://arxiv.org/abs/XXXX.XXXXX.
 """
 
