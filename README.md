@@ -1,6 +1,6 @@
-# Lorentz Boost Network (LBN) [![pipeline status](https://git.rwth-aachen.de/3pia/lbn/badges/master/pipeline.svg)](https://git.rwth-aachen.de/3pia/lbn/commits/master)
+# Lorentz Boost Network (LBN) [![pipeline status](https://git.rwth-aachen.de/3pia/lbn/badges/master/pipeline.svg)](https://git.rwth-aachen.de/3pia/lbn/pipelines)
 
-TensorFlow implementation of the Lorentz Boost Network from [arXiv:XXXX.XXXXX [hep-ex]](https://arxiv.org/abs/XXXX.XXXXX).
+TensorFlow implementation of the Lorentz Boost Network from [arXiv:1812.09722 [hep-ex]](https://arxiv.org/abs/1812.09722).
 
 Original repository: [git.rwth-aachen.de/3pia/lbn](https://git.rwth-aachen.de/3pia/lbn)
 
