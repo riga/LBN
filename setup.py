@@ -39,7 +39,7 @@ setuptools.setup(
     version=lbn.__version__,
     author=lbn.__author__,
     author_email=lbn.__email__,
-    description=lbn.__doc__.strip(),
+    description=lbn.__doc__.strip().split("\n")[0].strip(),
     license=lbn.__license__,
     url=lbn.__contact__,
     keywords=keywords,

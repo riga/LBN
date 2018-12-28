@@ -1,8 +1,7 @@
 # coding: utf-8
 
 """
-TensorFlow implementation of the Lorentz Boost Network (LBN).
-For more information, see https://arxiv.org/abs/1812.09722.
+TensorFlow implementation of the Lorentz Boost Network (LBN). https://arxiv.org/abs/1812.09722.
 """
 
 
@@ -12,7 +11,7 @@ __license__ = "BSD"
 __credits__ = ["Martin Erdmann", "Erik Geiser", "Yannik Rath", "Marcel Rieger"]
 __contact__ = "https://git.rwth-aachen.de/3pia/lbn"
 __email__ = "marcel.rieger@cern.ch"
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 __all__ = ["LBN", "FeatureFactoryBase", "FeatureFactory"]
 
