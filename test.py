@@ -292,25 +292,25 @@ class TestCase(unittest.TestCase):
 
         # make all tests on the first boosted particle at batch pos 1
         self.assertAlmostEqual(lbn.feature_factory.E().numpy()[1, 0], 217.82007, 4)
-        self.assertAlmostEqual(lbn.feature_factory.px().numpy()[1, 0], -93.470245, 5)
-        self.assertAlmostEqual(lbn.feature_factory.py().numpy()[1, 0], 56.69007, 5)
-        self.assertAlmostEqual(lbn.feature_factory.pz().numpy()[1, 0], -117.862404, 5)
-        self.assertAlmostEqual(lbn.feature_factory.pt().numpy()[1, 0], 109.318115, 5)
-        self.assertAlmostEqual(lbn.feature_factory.p().numpy()[1, 0], 160.75446, 5)
-        self.assertAlmostEqual(lbn.feature_factory.m().numpy()[1, 0], 146.98158, 5)
-        self.assertAlmostEqual(lbn.feature_factory.phi().numpy()[1, 0], 2.5964046, 5)
-        self.assertAlmostEqual(lbn.feature_factory.eta().numpy()[1, 0], -0.9355755, 5)
-        self.assertAlmostEqual(lbn.feature_factory.beta().numpy()[1, 0], 0.7380149, 5)
-        self.assertAlmostEqual(lbn.feature_factory.gamma().numpy()[1, 0], 1.4819548, 5)
+        self.assertAlmostEqual(lbn.feature_factory.px().numpy()[1, 0], -93.470245, 4)
+        self.assertAlmostEqual(lbn.feature_factory.py().numpy()[1, 0], 56.69007, 4)
+        self.assertAlmostEqual(lbn.feature_factory.pz().numpy()[1, 0], -117.862404, 4)
+        self.assertAlmostEqual(lbn.feature_factory.pt().numpy()[1, 0], 109.318115, 4)
+        self.assertAlmostEqual(lbn.feature_factory.p().numpy()[1, 0], 160.75446, 4)
+        self.assertAlmostEqual(lbn.feature_factory.m().numpy()[1, 0], 146.98158, 4)
+        self.assertAlmostEqual(lbn.feature_factory.phi().numpy()[1, 0], 2.5964046, 4)
+        self.assertAlmostEqual(lbn.feature_factory.eta().numpy()[1, 0], -0.9355755, 4)
+        self.assertAlmostEqual(lbn.feature_factory.beta().numpy()[1, 0], 0.7380149, 4)
+        self.assertAlmostEqual(lbn.feature_factory.gamma().numpy()[1, 0], 1.4819548, 4)
 
         # test pairwise features w.r.t. boosted particle 2, i.e., feature pos 0
-        self.assertAlmostEqual(lbn.feature_factory.pair_cos().numpy()[1, 0], 0.64787644, 5)
-        self.assertAlmostEqual(lbn.feature_factory.pair_dr().numpy()[1, 0], 2.6730149, 5)
+        self.assertAlmostEqual(lbn.feature_factory.pair_cos().numpy()[1, 0], 0.64787644, 4)
+        self.assertAlmostEqual(lbn.feature_factory.pair_dr().numpy()[1, 0], 2.6730149, 4)
         self.assertAlmostEqual(lbn.feature_factory.pair_ds().numpy()[1, 0], -136.8383, 4)
-        self.assertAlmostEqual(lbn.feature_factory.pair_dy().numpy()[1, 0], -1.3652772, 5)
+        self.assertAlmostEqual(lbn.feature_factory.pair_dy().numpy()[1, 0], -1.3652772, 4)
 
         # test the custom feature
-        self.assertAlmostEqual(lbn.feature_factory.px_plus_py().numpy()[1, 0], -36.780174, 5)
+        self.assertAlmostEqual(lbn.feature_factory.px_plus_py().numpy()[1, 0], -36.780174, 4)
 
 
 def create_four_vectors(n, p_low=-100., p_high=100., m_low=0.1, m_high=50., seed=None):
