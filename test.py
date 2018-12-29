@@ -179,7 +179,7 @@ class TestCase(unittest.TestCase):
         boosted = lbn.boosted_particles.numpy()[1, 0]
         components = [217.82007, -93.470245, 56.69007, -117.862404]
         for i, v in enumerate(components):
-            self.assertAlmostEqual(boosted[i], v, 5)
+            self.assertAlmostEqual(boosted[i], v, 4)
 
     def test_boosting_product(self):
         lbn = LBN(10, 4, boost_mode=LBN.PRODUCT, particle_weights=self.custom_particle_weights,
@@ -191,7 +191,7 @@ class TestCase(unittest.TestCase):
         boosted = lbn.boosted_particles.numpy()[1, 0]
         components = [217.82007, -93.470245, 56.69007, -117.862404]
         for i, v in enumerate(components):
-            self.assertAlmostEqual(boosted[i], v, 5)
+            self.assertAlmostEqual(boosted[i], v, 4)
 
     def test_boosting_combinations(self):
         lbn = LBN(10, boost_mode=LBN.COMBINATIONS, particle_weights=self.custom_particle_weights,
@@ -214,13 +214,13 @@ class TestCase(unittest.TestCase):
         boosted = lbn.boosted_particles.numpy()[1, 0]
         components = [288.7326, 172.70781, 102.427, 146.44083]
         for i, v in enumerate(components):
-            self.assertAlmostEqual(boosted[i], v, 4)
+            self.assertAlmostEqual(boosted[i], v, 3)
 
         # boosted particle 45 is p2 boosted into p1
         boosted = lbn.boosted_particles.numpy()[1, 45]
         components = [69.299545, -19.58605, -18.497059, -53.21913]
         for i, v in enumerate(components):
-            self.assertAlmostEqual(boosted[i], v, 4)
+            self.assertAlmostEqual(boosted[i], v, 3)
 
     def test_custom_feature_factory(self):
         class MyFeatureFactory(FeatureFactory):
@@ -291,7 +291,7 @@ class TestCase(unittest.TestCase):
         lbn(self.vectors_t, features=all_features)
 
         # make all tests on the first boosted particle at batch pos 1
-        self.assertAlmostEqual(lbn.feature_factory.E().numpy()[1, 0], 217.82007, 5)
+        self.assertAlmostEqual(lbn.feature_factory.E().numpy()[1, 0], 217.82007, 4)
         self.assertAlmostEqual(lbn.feature_factory.px().numpy()[1, 0], -93.470245, 5)
         self.assertAlmostEqual(lbn.feature_factory.py().numpy()[1, 0], 56.69007, 5)
         self.assertAlmostEqual(lbn.feature_factory.pz().numpy()[1, 0], -117.862404, 5)
