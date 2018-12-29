@@ -47,7 +47,7 @@ class TestCase(unittest.TestCase):
         ], shape=[10, 10], dtype=tf.float32)
 
     def test_vectors_seed(self):
-        self.assertAlmostEqual(np.sum(self.vectors), 9500.47157362)
+        self.assertAlmostEqual(np.sum(self.vectors), 1646.26998736)
 
     def test_constructor(self):
         lbn = LBN(10)
@@ -177,7 +177,7 @@ class TestCase(unittest.TestCase):
         # r = TLorentzVector(restframe[1], restframe[2], restframe[3], restframe[0])
         # p = p.Boost(-r.BoostVector())
         boosted = lbn.boosted_particles.numpy()[1, 0]
-        components = [295.55554, -49.238365, -57.182686, -13.449585]
+        components = [217.82007, -93.470245, 56.69007, -117.862404]
         for i, v in enumerate(components):
             self.assertAlmostEqual(boosted[i], v, 5)
 
@@ -189,7 +189,7 @@ class TestCase(unittest.TestCase):
         # compare all components of the first boosted particle in batch pos 1
         # see test_boosting_pairs for manual boost computation
         boosted = lbn.boosted_particles.numpy()[1, 0]
-        components = [295.55554, -49.238365, -57.182686, -13.449585]
+        components = [217.82007, -93.470245, 56.69007, -117.862404]
         for i, v in enumerate(components):
             self.assertAlmostEqual(boosted[i], v, 5)
 
@@ -212,15 +212,15 @@ class TestCase(unittest.TestCase):
 
         # boosted particle 0 is p1 boosted into p2
         boosted = lbn.boosted_particles.numpy()[1, 0]
-        components = [701.2019, -592.5028, 141.76767, -197.63687]
+        components = [288.7326, 172.70781, 102.427, 146.44083]
         for i, v in enumerate(components):
-            self.assertAlmostEqual(boosted[i], v, 3)
+            self.assertAlmostEqual(boosted[i], v, 4)
 
         # boosted particle 45 is p2 boosted into p1
         boosted = lbn.boosted_particles.numpy()[1, 45]
-        components = [141.52478, 85.97396, -95.47604, 14.268608]
+        components = [69.299545, -19.58605, -18.497059, -53.21913]
         for i, v in enumerate(components):
-            self.assertAlmostEqual(boosted[i], v, 3)
+            self.assertAlmostEqual(boosted[i], v, 4)
 
     def test_custom_feature_factory(self):
         class MyFeatureFactory(FeatureFactory):
@@ -277,43 +277,43 @@ class TestCase(unittest.TestCase):
         lbn = LBN(10, boost_mode=LBN.PAIRS, particle_weights=self.custom_particle_weights,
             restframe_weights=self.custom_restframe_weights, is_training=True)
 
-        all_features = [
-            "E", "px", "py", "pz", "pt", "p", "m", "phi", "eta", "beta", "gamma", "pair_cos",
-            "pair_dr", "pair_ds", "pair_dy",
-        ]
-        self.assertEqual(set(lbn.available_features), set(all_features))
-
-        # also add a custom feature
+        # add a custom feature
         @lbn.register_feature
         def px_plus_py(factory):
             return factory.px() + factory.py()
 
+        all_features = [
+            "E", "px", "py", "pz", "pt", "p", "m", "phi", "eta", "beta", "gamma", "pair_cos",
+            "pair_dr", "pair_ds", "pair_dy", "px_plus_py",
+        ]
+        self.assertEqual(set(lbn.available_features), set(all_features))
+
         lbn(self.vectors_t, features=all_features)
 
         # make all tests on the first boosted particle at batch pos 1
-        self.assertAlmostEqual(lbn.feature_factory.E().numpy()[1, 0], 295.55554, 5)
-        self.assertAlmostEqual(lbn.feature_factory.px().numpy()[1, 0], -49.238365, 5)
-        self.assertAlmostEqual(lbn.feature_factory.py().numpy()[1, 0], -57.182686, 5)
-        self.assertAlmostEqual(lbn.feature_factory.pz().numpy()[1, 0], -13.449585, 5)
-        self.assertAlmostEqual(lbn.feature_factory.pt().numpy()[1, 0], 75.460428, 5)
-        self.assertAlmostEqual(lbn.feature_factory.p().numpy()[1, 0], 76.649641, 5)
-        self.assertAlmostEqual(lbn.feature_factory.m().numpy()[1, 0], 285.443356, 5)
-        self.assertAlmostEqual(lbn.feature_factory.phi().numpy()[1, 0], -2.281683, 5)
-        self.assertAlmostEqual(lbn.feature_factory.eta().numpy()[1, 0], -0.177303, 5)
-        self.assertAlmostEqual(lbn.feature_factory.beta().numpy()[1, 0], 0.259341, 5)
-        self.assertAlmostEqual(lbn.feature_factory.gamma().numpy()[1, 0], 1.035426, 5)
+        self.assertAlmostEqual(lbn.feature_factory.E().numpy()[1, 0], 217.82007, 5)
+        self.assertAlmostEqual(lbn.feature_factory.px().numpy()[1, 0], -93.470245, 5)
+        self.assertAlmostEqual(lbn.feature_factory.py().numpy()[1, 0], 56.69007, 5)
+        self.assertAlmostEqual(lbn.feature_factory.pz().numpy()[1, 0], -117.862404, 5)
+        self.assertAlmostEqual(lbn.feature_factory.pt().numpy()[1, 0], 109.318115, 5)
+        self.assertAlmostEqual(lbn.feature_factory.p().numpy()[1, 0], 160.75446, 5)
+        self.assertAlmostEqual(lbn.feature_factory.m().numpy()[1, 0], 146.98158, 5)
+        self.assertAlmostEqual(lbn.feature_factory.phi().numpy()[1, 0], 2.5964046, 5)
+        self.assertAlmostEqual(lbn.feature_factory.eta().numpy()[1, 0], -0.9355755, 5)
+        self.assertAlmostEqual(lbn.feature_factory.beta().numpy()[1, 0], 0.7380149, 5)
+        self.assertAlmostEqual(lbn.feature_factory.gamma().numpy()[1, 0], 1.4819548, 5)
 
         # test pairwise features w.r.t. boosted particle 2, i.e., feature pos 0
-        self.assertAlmostEqual(lbn.feature_factory.pair_cos().numpy()[1, 0], 0.58045, 5)
-        self.assertAlmostEqual(lbn.feature_factory.pair_dr().numpy()[1, 0], 0.96127, 5)
-        self.assertAlmostEqual(lbn.feature_factory.pair_ds().numpy()[1, 0], -457.953327, 4)
-        self.assertAlmostEqual(lbn.feature_factory.pair_dy().numpy()[1, 0], -2.745842, 5)
+        self.assertAlmostEqual(lbn.feature_factory.pair_cos().numpy()[1, 0], 0.64787644, 5)
+        self.assertAlmostEqual(lbn.feature_factory.pair_dr().numpy()[1, 0], 2.6730149, 5)
+        self.assertAlmostEqual(lbn.feature_factory.pair_ds().numpy()[1, 0], -136.8383, 4)
+        self.assertAlmostEqual(lbn.feature_factory.pair_dy().numpy()[1, 0], -1.3652772, 5)
 
         # test the custom feature
-        self.assertAlmostEqual(lbn.feature_factory.px_plus_py().numpy()[1, 0], -106.421051, 5)
+        self.assertAlmostEqual(lbn.feature_factory.px_plus_py().numpy()[1, 0], -36.780174, 5)
 
 
-def create_four_vectors(n, p_low=10., p_high=100., m_low=0.1, m_high=50., seed=None):
+def create_four_vectors(n, p_low=-100., p_high=100., m_low=0.1, m_high=50., seed=None):
     """
     Creates a numpy array with shape ``n + (4,)`` describing four-vectors of particles whose
     momentum components are uniformly distributed between *p_low* and *p_high*, and masses between
@@ -322,18 +322,14 @@ def create_four_vectors(n, p_low=10., p_high=100., m_low=0.1, m_high=50., seed=N
     if seed is not None:
         np.random.seed(seed)
 
-    # ensure n is a tuple
+    # create random four-vectors
     if not isinstance(n, tuple):
         n = (n,)
-
-    # create random four-vectors
-    vecs = np.abs(np.random.normal(p_low, p_high, n + (4,)))
+    vecs = np.random.uniform(p_low, p_high, n + (4,))
 
     # the energy is also random and might be lower than the momentum,
-    # make sure that masses are positive and uniformly distributed
-    m = np.abs(np.random.normal(m_low, m_high, n))
-
-    # insert into vectors
+    # so draw uniformly distributed masses, and compute and insert the energy
+    m = np.abs(np.random.uniform(m_low, m_high, n))
     p = np.sqrt(np.sum(vecs[..., 1:]**2, axis=-1))
     E = (p**2 + m**2)**0.5
     vecs[..., 0] = E
