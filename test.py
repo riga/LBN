@@ -104,9 +104,6 @@ class TestCase(unittest.TestCase):
             self.assertIsNotNone(getattr(lbn, attr))
 
     def test_post_build_attributes(self):
-        lbn = LBN(10, boost_mode=LBN.PAIRS, is_training=True)
-        lbn(self.vectors_t, features=self.feature_set).numpy()
-
         attrs = [
             "particle_weights", "abs_particle_weights", "clip_particle_weights",
             "restframe_weights", "abs_restframe_weights", "clip_restframe_weights", "n_in", "n_dim",
@@ -116,6 +113,12 @@ class TestCase(unittest.TestCase):
             "restframes", "Lambda", "boosted_particles", "_raw_features", "_norm_features",
             "features",
         ]
+
+        lbn = LBN(10, boost_mode=LBN.PAIRS, is_training=True)
+        for attr in attrs:
+            self.assertIn(getattr(lbn, attr), (None, True, False))
+
+        lbn(self.vectors_t, features=self.feature_set).numpy()
         for attr in attrs:
             self.assertIsNotNone(getattr(lbn, attr), None)
 

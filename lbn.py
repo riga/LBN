@@ -765,7 +765,7 @@ class FeatureFactory(FeatureFactoryBase):
 
 def tf_non_zero(t, epsilon):
     """
-    Ensures that all zeros in a tensor are replaced with epsilon.
+    Ensures that all zeros in a tensor *t* are replaced by *epsilon*.
     """
     # use combination of abs and sign instead of a where op
     return t + (1 - tf.abs(tf.sign(t))) * epsilon
