@@ -4,6 +4,7 @@
 import os
 import setuptools
 
+os.environ["LBN_SETUP_RUNNING"] = "1"
 import lbn
 
 
