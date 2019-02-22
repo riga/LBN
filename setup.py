@@ -34,20 +34,14 @@ with open(os.path.join(this_dir, "README.md"), "r") as f:
 with open(os.path.join(this_dir, "requirements.txt"), "r") as f:
     install_requires = [line.strip() for line in f.readlines() if line.strip()]
 
-# load package infos
-pkg = {}
-with open(os.path.join(this_dir, "__version__.py"), "r") as f:
-    exec(f.read(), pkg)
-
-
 setuptools.setup(
-    name="lbn",
-    version=pkg["__version__"],
-    author=pkg["__author__"],
-    author_email=pkg["__email__"],
-    description=pkg["__doc__"].strip().split("\n")[0].strip(),
-    license=pkg["__license__"],
-    url=pkg["__contact__"],
+    name=lbn.__name__,
+    version=lbn.__version__,
+    author=lbn.__author__,
+    author_email=lbn.__email__,
+    description=lbn.__doc__.strip().split("\n")[0].strip(),
+    license=lbn.__license__,
+    url=lbn.__contact__,
     keywords=keywords,
     classifiers=classifiers,
     long_description=long_description,
@@ -55,6 +49,6 @@ setuptools.setup(
     install_requires=install_requires,
     python_requires=">=2.7",
     zip_safe=False,
-    py_modules=["lbn"],
+    py_modules=[lbn.__name__],
     data_files=[(".", ["LICENSE", "requirements.txt", "README.md"])],
 )
