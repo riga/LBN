@@ -117,7 +117,7 @@ class LBN(object):
         elif isinstance(batch_norm, (list, tuple)) and len(batch_norm) == 2:
             self.batch_norm_center, self.batch_norm_scale = batch_norm
         else:
-            raise ValueError("invalid batch_norm, should be bool and list/tuple of two bools")
+            raise ValueError("invalid batch_norm, should be bool or list/tuple of two bools")
 
         # particle weights and settings
         self.particle_weights = particle_weights
