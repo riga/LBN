@@ -29,7 +29,9 @@ Via [pip](https://pypi.python.org/pypi/lbn):
 pip install lbn
 ```
 
-NumPy and TensorFlow are the only dependencies.
+NumPy and TensorFlow (1.X) are the only dependencies.
+
+TensorFlow 2.0 is not *yet* supported.
 
 
 ### Testing
