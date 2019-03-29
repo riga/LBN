@@ -57,7 +57,7 @@ class LBN(object):
     *particle_weights* and *restframe_weights* can refer to externally defined variables with custom
     initialized weights. If set, their shape must match the number of combinations and inputs. For
     simple initialization tests, *weight_init* can be a tuple containing the Gaussian mean and
-    standard deviation that is passed to ``tf.random_normal``. When *None*, and the weight tensors
+    standard deviation that is passed to ``tf.random.normal``. When *None*, and the weight tensors
     are created internally, mean and standard deviation default to *0* and *1 / combinations*. When
     *abs_particle_weights* (*abs_restframe_weights*) is *True*, ``tf.abs`` is applied to the
     particle (rest frame) weights. When *clip_particle_weights* (*clip_restframe_weights*) is
@@ -253,33 +253,33 @@ class LBN(object):
         Builds the LBN structure layer by layer within dedicated variable scopes. *input* must be a
         tensor of the input four-vectors. All *kwargs* are forwarded to :py:meth:`build_features`.
         """
-        with tf.variable_scope(self.name):
-            with tf.variable_scope("placeholders"):
+        with tf.name_scope(self.name):
+            with tf.name_scope("placeholders"):
                 self.build_placeholders()
 
-            with tf.variable_scope("inputs"):
+            with tf.name_scope("inputs"):
                 self.handle_input(inputs)
 
-            with tf.variable_scope("constants"):
+            with tf.name_scope("constants"):
                 self.build_constants()
 
-            with tf.variable_scope("particles"):
+            with tf.name_scope("particles"):
                 self.build_combinations("particle", self.n_particles)
 
             # rest frames are not built for COMBINATIONS boost mode
             if self.boost_mode != self.COMBINATIONS:
-                with tf.variable_scope("restframes"):
+                with tf.name_scope("restframes"):
                     self.build_combinations("restframe", self.n_restframes)
 
-            with tf.variable_scope("boost"):
+            with tf.name_scope("boost"):
                 self.build_boost()
 
-            with tf.variable_scope("features"):
+            with tf.name_scope("features"):
                 self.build_features(**kwargs)
             self.features = self._raw_features
 
             if self.batch_norm_center or self.batch_norm_scale:
-                with tf.variable_scope("norm"):
+                with tf.name_scope("norm"):
                     self.build_norm()
                 self.features = self._norm_features
 
@@ -346,7 +346,7 @@ class LBN(object):
             else:
                 mean, stddev = 0., 1. / m
 
-            W = tf.Variable(tf.random_normal(weight_shape, mean, stddev, dtype=tf.float32))
+            W = tf.Variable(tf.random.normal(weight_shape, mean, stddev, dtype=tf.float32))
 
         else:
             # W is set externally, check the shape, consider batching
@@ -427,15 +427,15 @@ class LBN(object):
         pvec = tf.reshape(restframes_pvec, [-1, 3])
 
         # determine the beta vectors
-        betavec = tf.div(pvec, E)
+        betavec = pvec / E
 
         # determine the scalar beta and gamma values
-        beta = tf.div(tf.sqrt(tf.reduce_sum(tf.square(pvec), axis=1)), tf.squeeze(E, axis=-1))
-        gamma = tf.div(1., tf.sqrt(1. - tf.square(beta) + self.epsilon))
+        beta = tf.sqrt(tf.reduce_sum(tf.square(pvec), axis=1)) / tf.squeeze(E, axis=-1)
+        gamma = 1. / tf.sqrt(1. - tf.square(beta) + self.epsilon)
 
         # the e vector, (1, -betavec / beta)^T
         beta = tf.expand_dims(beta, axis=-1)
-        e = tf.expand_dims(tf.concat([tf.ones_like(E), -tf.div(betavec, beta)], axis=-1), axis=-1)
+        e = tf.expand_dims(tf.concat([tf.ones_like(E), -betavec / beta], axis=-1), axis=-1)
         e_T = tf.transpose(e, perm=[0, 2, 1])
 
         # finally, the boost matrix

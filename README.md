@@ -42,10 +42,10 @@ Tests should be run for Python 2 and 3. The following commands assume you are ro
 python -m unittest test
 
 # or via docker, python 2
-docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:latest python -m unittest test
+docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:1.13.1 python -m unittest test
 
 # or via docker, python 3
-docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:latest-py3 python -m unittest test
+docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:1.13.1-py3 python -m unittest test
 ```
 
 
