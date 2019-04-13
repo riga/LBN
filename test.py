@@ -337,10 +337,10 @@ class TestCase(unittest.TestCase):
         model = Model()
         output = model(self.vectors_t, features=self.feature_set).numpy()
 
-        self.assertAlmostEqual(output[0, 0], 0.321891, 5)
-        self.assertAlmostEqual(output[0, 1], 0.678109, 5)
-        self.assertAlmostEqual(output[1, 0], 0.625410, 5)
-        self.assertAlmostEqual(output[1, 1], 0.374590, 5)
+        self.assertAlmostEqual(output[0, 0], 0.548664, 5)
+        self.assertAlmostEqual(output[0, 1], 0.451337, 5)
+        self.assertAlmostEqual(output[1, 0], 0.394629, 5)
+        self.assertAlmostEqual(output[1, 1], 0.605371, 5)
 
 
 def create_four_vectors(n, p_low=-100., p_high=100., m_low=0.1, m_high=50., seed=None):
