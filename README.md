@@ -8,6 +8,7 @@ Original repository: [git.rwth-aachen.de/3pia/lbn](https://git.rwth-aachen.de/3p
 ### Usage example
 
 ```python
+import tensorflow as tf
 from lbn import LBN
 
 # initialize the LBN, set 10 combinations and pairwise boosting
@@ -20,6 +21,25 @@ features = lbn(four_vectors)
 ...
 ```
 
+Or with TensorFlow 2 and Keras:
+
+```python
+import tensorflow as tf
+from lbn import LBN, LBNLayer
+
+# start a sequential model
+model = tf.keras.models.Sequential()
+
+# add the LBN layer
+model.add(LBNLayer(10, boost_mode=LBN.PAIRS))
+
+# add a dense layer
+model.add(tf.keras.layers.Dense(1024))
+
+# continue builing and training the model
+...
+```
+
 
 ### Installation and dependencies
 
@@ -29,23 +49,21 @@ Via [pip](https://pypi.python.org/pypi/lbn):
 pip install lbn
 ```
 
-NumPy and TensorFlow (1.X) are the only dependencies.
-
-TensorFlow 2.0 is not *yet* supported.
+NumPy and TensorFlow are the only dependencies. Both TensorFlow v1 and v2 are supported.
 
 
 ### Testing
 
-Tests should be run for Python 2 and 3. The following commands assume you are root directory of the LBN respository:
+Tests should be run for Python 2 and 3 and for TensorFlow 1 and 2. The following commands assume you are root directory of the LBN respository:
 
 ```bash
 python -m unittest test
 
-# or via docker, python 2
+# or via docker, python 2 and tf 1
 docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:1.13.1 python -m unittest test
 
-# or via docker, python 3
-docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:1.13.1-py3 python -m unittest test
+# or via docker, python 3 and tf 2
+docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:2.0.0a0-py3 python -m unittest test
 ```
 
 
