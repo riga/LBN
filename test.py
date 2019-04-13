@@ -8,15 +8,20 @@ LBN unit tests.
 __all__ = ["TestCase"]
 
 
+import sys
 import unittest
 
 import numpy as np
 import tensorflow as tf
 
-from lbn import LBN, FeatureFactory
+from lbn import LBN, LBNLayer, FeatureFactory
 
-# enable eager execution
-tf.enable_eager_execution()
+
+PY3 = sys.version.startswith("3.")
+TF2 = tf.__version__.startswith("2.")
+
+if not TF2:
+    tf.enable_eager_execution()
 
 
 class TestCase(unittest.TestCase):
@@ -24,8 +29,15 @@ class TestCase(unittest.TestCase):
     def __init__(self, *args, **kwargs):
         super(TestCase, self).__init__(*args, **kwargs)
 
+        # fixate random seeds
+        np.random.seed(123)
+        if TF2:
+            tf.random.set_seed(123)
+        else:
+            tf.random.set_random_seed(123)
+
         # create some four-vectors with fixed seed and batch size 2
-        self.vectors = create_four_vectors((2, 10), seed=123)
+        self.vectors = create_four_vectors((2, 10))
         self.vectors_t = tf.constant(self.vectors, dtype=tf.float32)
 
         # common feature set
@@ -111,7 +123,7 @@ class TestCase(unittest.TestCase):
             "particles_px", "particles_py", "particles_pz", "particles_pvec", "particles",
             "restframes_E", "restframes_px", "restframes_py", "restframes_pz", "restframes_pvec",
             "restframes", "Lambda", "boosted_particles", "_raw_features", "_norm_features",
-            "features",
+            "features", "batch_norm",
         ]
 
         lbn = LBN(10, boost_mode=LBN.PAIRS, is_training=True)
@@ -314,6 +326,32 @@ class TestCase(unittest.TestCase):
 
         # test the custom feature
         self.assertAlmostEqual(lbn.feature_factory.px_plus_py().numpy()[1, 0], -36.780174, 4)
+
+    def test_keras_layer(self):
+        l = LBNLayer(10, boost_mode=LBN.PAIRS, batch_norm=True, is_training=True)
+        self.assertIsInstance(l.lbn, LBN)
+        self.assertTrue(l.lbn.batch_norm_center)
+
+        # build a custom model
+        class Model(tf.keras.models.Model):
+
+            def __init__(self):
+                super(Model, self).__init__()
+
+                self.lbn = l
+                self.dense = tf.keras.layers.Dense(1024, activation="elu")
+                self.softmax = tf.keras.layers.Dense(2, activation="softmax")
+
+            def __call__(self, *args, **kwargs):
+                return self.softmax(self.dense(self.lbn(*args, **kwargs)))
+
+        model = Model()
+        output = model(self.vectors_t, features=self.feature_set).numpy()
+
+        self.assertAlmostEqual(output[0, 0], 0.548664 if PY3 else 0.795995, 5)
+        self.assertAlmostEqual(output[0, 1], 0.451337 if PY3 else 0.204005, 5)
+        self.assertAlmostEqual(output[1, 0], 0.394629 if PY3 else 0.177576, 5)
+        self.assertAlmostEqual(output[1, 1], 0.605371 if PY3 else 0.822424, 5)
 
 
 def create_four_vectors(n, p_low=-100., p_high=100., m_low=0.1, m_high=50., seed=None):
