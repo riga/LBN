@@ -19,9 +19,8 @@ __all__ = ["LBN", "FeatureFactoryBase", "FeatureFactory"]
 import os
 import functools
 
-if os.environ.get("LBN_SETUP_RUNNING") != "1":
-    import numpy as np
-    import tensorflow as tf
+import numpy as np
+import tensorflow as tf
 
 
 class LBN(object):
