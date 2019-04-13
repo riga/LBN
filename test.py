@@ -8,12 +8,20 @@ LBN unit tests.
 __all__ = ["TestCase"]
 
 
+import sys
 import unittest
 
 import numpy as np
 import tensorflow as tf
 
 from lbn import LBN, LBNLayer, FeatureFactory
+
+
+PY3 = sys.version.startswith("3.")
+TF2 = tf.__version__.startswith("2.")
+
+if not TF2:
+    tf.enable_eager_execution()
 
 
 class TestCase(unittest.TestCase):
@@ -23,7 +31,10 @@ class TestCase(unittest.TestCase):
 
         # fixate random seeds
         np.random.seed(123)
-        tf.random.set_seed(123)
+        if TF2:
+            tf.random.set_seed(123)
+        else:
+            tf.random.set_random_seed(123)
 
         # create some four-vectors with fixed seed and batch size 2
         self.vectors = create_four_vectors((2, 10))
@@ -337,10 +348,10 @@ class TestCase(unittest.TestCase):
         model = Model()
         output = model(self.vectors_t, features=self.feature_set).numpy()
 
-        self.assertAlmostEqual(output[0, 0], 0.548664, 5)
-        self.assertAlmostEqual(output[0, 1], 0.451337, 5)
-        self.assertAlmostEqual(output[1, 0], 0.394629, 5)
-        self.assertAlmostEqual(output[1, 1], 0.605371, 5)
+        self.assertAlmostEqual(output[0, 0], 0.548664 if PY3 else 0.795995, 5)
+        self.assertAlmostEqual(output[0, 1], 0.451337 if PY3 else 0.204005, 5)
+        self.assertAlmostEqual(output[1, 0], 0.394629 if PY3 else 0.177576, 5)
+        self.assertAlmostEqual(output[1, 1], 0.605371 if PY3 else 0.822424, 5)
 
 
 def create_four_vectors(n, p_low=-100., p_high=100., m_low=0.1, m_high=50., seed=None):

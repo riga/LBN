@@ -12,7 +12,23 @@ lint:
     - pip install flake8 --user
     - flake8 lbn.py test.py setup.py
 
-unittests_py2:
+unittest_tf1_py2:
+  stage: test
+  tags:
+    - docker
+  image: tensorflow/tensorflow:1.13.1
+  script:
+    - python -m unittest test
+
+unittests_tf1_py3:
+  stage: test
+  tags:
+    - docker
+  image: tensorflow/tensorflow:1.13.1-py3
+  script:
+    - python -m unittest test
+
+unittest_tf2_py2:
   stage: test
   tags:
     - docker
@@ -20,7 +36,7 @@ unittests_py2:
   script:
     - python -m unittest test
 
-unittests_py3:
+unittests_tf2_py3:
   stage: test
   tags:
     - docker
