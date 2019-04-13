@@ -16,7 +16,7 @@ unittests_py2:
   stage: test
   tags:
     - docker
-  image: tensorflow/tensorflow:1.13.1
+  image: tensorflow/tensorflow:2.0.0a0
   script:
     - python -m unittest test
 
@@ -24,6 +24,6 @@ unittests_py3:
   stage: test
   tags:
     - docker
-  image: tensorflow/tensorflow:1.13.1-py3
+  image: tensorflow/tensorflow:2.0.0a0-py3
   script:
     - python -m unittest test

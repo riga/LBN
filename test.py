@@ -15,9 +15,6 @@ import tensorflow as tf
 
 from lbn import LBN, FeatureFactory
 
-# enable eager execution
-tf.enable_eager_execution()
-
 
 class TestCase(unittest.TestCase):
 
