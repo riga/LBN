@@ -44,10 +44,8 @@ class LBN(object):
     build. Their interpretation depends on the *boost_mode*. *n_restframes* is only used for the
     *PRODUCT* mode. It is inferred from *n_particles* for *PAIRS* and *COMBINATIONS*.
 
-    *is_training* can an external scalar boolean tensor denoting the training or testing phase. If
-    *None*, in internal flag is created instead and available under the same name. *epsilon* is
-    supposed to be a small number that is used in various places for numerical stability. *name* is
-    the main namespace of the LBN and defaults to the class name.
+    *epsilon* is supposed to be a small number that is used in various places for numerical
+    stability. *name* is the main namespace of the LBN and defaults to the class name.
 
     *feature_factory* must be a subclass of :py:class:`FeatureFactoryBase` and provides the
     available, generic mappings from boosted particles to output features of the LBN. If *None*, the
@@ -63,11 +61,6 @@ class LBN(object):
     *True*, particle (rest frame) weights are clipped at *epsilon*, or at the passed value if it is
     not a boolean. Note that the abs operation is applied before clipping.
 
-    *batch_norm* defines whether feature scaling via batch normalization with floating averages is
-    applied to the output features. It can be a single value or a tuple of two values that are
-    passed to ``tf.layers.batch_normalization``. Make sure to set the proper value for the
-    *is_training* flag in the feed dict.
-
     Instances of this class store most of the intermediate tensors (such as inputs, combinations
     weights, boosted particles, boost matrices, raw features, etc) for later inspection. Note that
     most of these tensors are set after :py:meth:`build` (or the :py:meth:`__call__` shorthand as
@@ -82,7 +75,7 @@ class LBN(object):
     def __init__(self, n_particles, n_restframes=None, boost_mode=PAIRS, feature_factory=None,
             particle_weights=None, abs_particle_weights=True, clip_particle_weights=False,
             restframe_weights=None, abs_restframe_weights=True, clip_restframe_weights=False,
-            weight_init=None, batch_norm=True, is_training=None, epsilon=1e-5, name=None):
+            weight_init=None, epsilon=1e-5, name=None):
         super(LBN, self).__init__()
 
         # determine the number of output particles, which depends on the boost mode
@@ -109,18 +102,6 @@ class LBN(object):
         self.n_particles = n_particles
         self.n_restframes = n_restframes
 
-        # output batch normalization
-        if isinstance(batch_norm, bool):
-            self.batch_norm_center = batch_norm
-            self.batch_norm_scale = batch_norm
-        elif isinstance(batch_norm, (list, tuple)) and len(batch_norm) == 2:
-            self.batch_norm_center, self.batch_norm_scale = batch_norm
-        else:
-            raise ValueError("invalid batch_norm, should be bool or list/tuple of two bools")
-
-        # the keras batch normalization layer
-        self.batch_norm = None
-
         # particle weights and settings
         self.particle_weights = particle_weights
         self.abs_particle_weights = abs_particle_weights
@@ -133,9 +114,6 @@ class LBN(object):
 
         # custom weight init parameters in a tuple (mean, stddev)
         self.weight_init = weight_init
-
-        # training flag
-        self.is_training = is_training
 
         # epsilon for numerical stability
         self.epsilon = epsilon
@@ -184,7 +162,6 @@ class LBN(object):
 
         # intermediate features
         self._raw_features = None  # raw features before batch normalization, etc
-        self._norm_features = None  # features after batch normalization, if used
 
         # final output features
         self.features = None
@@ -256,9 +233,6 @@ class LBN(object):
         tensor of the input four-vectors. All *kwargs* are forwarded to :py:meth:`build_features`.
         """
         with tf.name_scope(self.name):
-            with tf.name_scope("placeholders"):
-                self.build_placeholders()
-
             with tf.name_scope("inputs"):
                 self.handle_input(inputs)
 
@@ -280,25 +254,17 @@ class LBN(object):
                 self.build_features(**kwargs)
             self.features = self._raw_features
 
-            if self.batch_norm_center or self.batch_norm_scale:
-                with tf.name_scope("norm"):
-                    self.build_norm()
-                self.features = self._norm_features
-
         return self.features
-
-    def build_placeholders(self):
-        """
-        Builds the internal placeholders.
-        """
-        # the train phase placeholder
-        if self.is_training is None:
-            self.is_training = tf.placeholder(tf.bool, name="is_training")
 
     def handle_input(self, inputs):
         """
         Takes the passed four-vector *inputs* and infers dimensions and some internal tensors.
         """
+        # inputs are expected to be four-vectors with the shape (batch, n_in, 4)
+        # convert them in case they have the shape (batch, 4 * n_in)
+        if len(inputs.shape) == 2 and inputs.shape[-1] % 4 == 0:
+            inputs = tf.reshape(inputs, (-1, inputs.shape[-1] // 4, 4))
+
         # store the input vectors
         self.inputs = inputs
 
@@ -484,8 +450,7 @@ class LBN(object):
         Builds the output features. *features* should be a list of feature names as registered to
         the :py:attr:`feature_factory` instance. When *None*, the default features
         ``["E", "px", "py", "pz"]`` are built. *external_features* can be a list of tensors of
-        externally produced features, that are concatenated to the built features and are, e.g.,
-        subject to the internal batch normalization.
+        externally produced features, that are concatenated to the built features.
         """
         # default to reshaped 4-vector elements
         if features is None:
@@ -509,18 +474,6 @@ class LBN(object):
         # save raw features
         self._raw_features = tf.concat(concat, axis=-1)
 
-    def build_norm(self):
-        """
-        Applies simple batch normalization with floating averages to the output features using
-        ``tf.keras.layers.BatchNormalization``.
-        """
-        self.batch_norm = tf.keras.layers.BatchNormalization(
-            axis=1,
-            center=self.batch_norm_center,
-            scale=self.batch_norm_scale,
-        )
-        self._norm_features = self.batch_norm(self.features, training=self.is_training)
-
 
 class LBNLayer(tf.keras.layers.Layer):
     """
@@ -537,12 +490,49 @@ class LBNLayer(tf.keras.layers.Layer):
     def __init__(self, *args, **kwargs):
         super(LBNLayer, self).__init__()
 
-        # create the LBN instalce
+        # store names of features to build
+        self.feature_names = kwargs.pop("features", None)
+
+        # store the seed
+        self.seed = kwargs.pop("seed", None)
+
+        # create the LBN instance with the remaining arguments
         self.lbn = LBN(*args, **kwargs)
 
-    def __call__(self, *args, **kwargs):
+    def build(self, input_shape):
+        # get the number of input vectors
+        n_in = input_shape[-2] if len(input_shape) == 3 else input_shape[-1] // 4
+
+        def add_weight(name, m):
+            if isinstance(self.lbn.weight_init, tuple):
+                mean, stddev = self.lbn.weight_init
+            else:
+                mean, stddev = 0., 1. / m
+
+            weight_shape = (n_in, m)
+            weight_name = "{}_weights".format(name)
+            weight_init = tf.keras.initializers.RandomNormal(mean=mean, stddev=stddev,
+                seed=self.seed)
+
+            W = self.add_weight(name=weight_name, shape=weight_shape, initializer=weight_init,
+                trainable=True)
+
+            setattr(self, weight_name, W)
+            setattr(self.lbn, weight_name, W)
+
+        # add weights, depending on the boost mode
+        add_weight("particle", self.lbn.n_particles)
+        if self.lbn.boost_mode != LBN.COMBINATIONS:
+            add_weight("restframe", self.lbn.n_restframes)
+
+        super(LBNLayer, self).build(input_shape)
+
+    def call(self, inputs):
         # forward to lbn.__call__
-        return self.lbn(*args, **kwargs)
+        return self.lbn(inputs, features=self.feature_names)
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0], self.lbn.n_features)
 
 
 class FeatureFactoryBase(object):

@@ -66,7 +66,7 @@ class TestCase(unittest.TestCase):
         self.assertIsInstance(lbn, LBN)
 
     def test_constructor_boost_mode_pairs(self):
-        lbn = LBN(10, boost_mode=LBN.PAIRS, is_training=True)
+        lbn = LBN(10, boost_mode=LBN.PAIRS)
         self.assertEqual(lbn.n_particles, 10)
         self.assertEqual(lbn.n_restframes, 10)
         self.assertEqual(lbn.n_out, 10)
@@ -79,7 +79,7 @@ class TestCase(unittest.TestCase):
         self.assertEqual(features.shape, (2, 95))
 
     def test_constructor_boost_mode_product(self):
-        lbn = LBN(10, 4, boost_mode=LBN.PRODUCT, is_training=True)
+        lbn = LBN(10, 4, boost_mode=LBN.PRODUCT)
         self.assertEqual(lbn.n_particles, 10)
         self.assertEqual(lbn.n_restframes, 4)
         self.assertEqual(lbn.n_out, 40)
@@ -92,7 +92,7 @@ class TestCase(unittest.TestCase):
         self.assertEqual(features.shape, (2, 980))
 
     def test_constructor_boost_mode_combinations(self):
-        lbn = LBN(10, boost_mode=LBN.COMBINATIONS, is_training=True)
+        lbn = LBN(10, boost_mode=LBN.COMBINATIONS)
         self.assertEqual(lbn.n_particles, 10)
         self.assertEqual(lbn.n_restframes, 10)
         self.assertEqual(lbn.n_out, 90)
@@ -106,12 +106,12 @@ class TestCase(unittest.TestCase):
 
     def test_unknown_boost_mode(self):
         with self.assertRaises(ValueError):
-            LBN(10, boost_mode="definitely_not_there", is_training=True)
+            LBN(10, boost_mode="definitely_not_there")
 
     def test_pre_build_attributes(self):
-        lbn = LBN(10, boost_mode=LBN.PAIRS, is_training=True)
+        lbn = LBN(10, boost_mode=LBN.PAIRS)
 
-        attrs = ["is_training", "epsilon", "name"]
+        attrs = ["epsilon", "name"]
         for attr in attrs:
             self.assertIsNotNone(getattr(lbn, attr))
 
@@ -122,11 +122,10 @@ class TestCase(unittest.TestCase):
             "I", "U", "inputs", "inputs_E", "inputs_px", "inputs_py", "inputs_pz", "particles_E",
             "particles_px", "particles_py", "particles_pz", "particles_pvec", "particles",
             "restframes_E", "restframes_px", "restframes_py", "restframes_pz", "restframes_pvec",
-            "restframes", "Lambda", "boosted_particles", "_raw_features", "_norm_features",
-            "features", "batch_norm",
+            "restframes", "Lambda", "boosted_particles", "_raw_features", "features",
         ]
 
-        lbn = LBN(10, boost_mode=LBN.PAIRS, is_training=True)
+        lbn = LBN(10, boost_mode=LBN.PAIRS)
         for attr in attrs:
             self.assertIn(getattr(lbn, attr), (None, True, False))
 
@@ -134,22 +133,9 @@ class TestCase(unittest.TestCase):
         for attr in attrs:
             self.assertIsNotNone(getattr(lbn, attr), None)
 
-    def test_batch_norm(self):
-        lbn = LBN(10, boost_mode=LBN.PAIRS, batch_norm=True, is_training=True)
-        self.assertTrue(lbn.batch_norm_center)
-        self.assertTrue(lbn.batch_norm_scale)
-
-        lbn = LBN(10, boost_mode=LBN.PAIRS, batch_norm=(True, False), is_training=True)
-        self.assertTrue(lbn.batch_norm_center)
-        self.assertFalse(lbn.batch_norm_scale)
-
-        lbn = LBN(10, boost_mode=LBN.PAIRS, batch_norm=(0.5, 2.), is_training=True)
-        self.assertEqual(lbn.batch_norm_center, 0.5)
-        self.assertEqual(lbn.batch_norm_scale, 2.)
-
     def test_custom_weights(self):
         lbn = LBN(10, boost_mode=LBN.PAIRS, particle_weights=self.custom_particle_weights,
-            restframe_weights=self.custom_restframe_weights, is_training=True)
+            restframe_weights=self.custom_restframe_weights)
         lbn(self.vectors_t, features=self.feature_set).numpy()
 
         self.assertEqual(lbn.particle_weights.numpy().shape, (10, 10))
@@ -167,13 +153,13 @@ class TestCase(unittest.TestCase):
 
         # test wrong shape
         lbn = LBN(10, boost_mode=LBN.PAIRS, particle_weights=self.custom_particle_weights,
-            restframe_weights=self.custom_restframe_weights[:-1], is_training=True)
+            restframe_weights=self.custom_restframe_weights[:-1])
         with self.assertRaises(ValueError):
             lbn(self.vectors_t, features=self.feature_set).numpy()
 
     def test_boosting_pairs(self):
         lbn = LBN(10, boost_mode=LBN.PAIRS, particle_weights=self.custom_particle_weights,
-            restframe_weights=self.custom_restframe_weights, is_training=True)
+            restframe_weights=self.custom_restframe_weights)
         lbn(self.vectors_t, features=self.feature_set).numpy()
 
         # compare all components of the first boosted particle in batch pos 1
@@ -198,7 +184,7 @@ class TestCase(unittest.TestCase):
 
     def test_boosting_product(self):
         lbn = LBN(10, 4, boost_mode=LBN.PRODUCT, particle_weights=self.custom_particle_weights,
-            restframe_weights=self.custom_restframe_weights[:, :4], is_training=True)
+            restframe_weights=self.custom_restframe_weights[:, :4])
         lbn(self.vectors_t, features=self.feature_set).numpy()
 
         # compare all components of the first boosted particle in batch pos 1
@@ -209,8 +195,7 @@ class TestCase(unittest.TestCase):
             self.assertAlmostEqual(boosted[i], v, 4)
 
     def test_boosting_combinations(self):
-        lbn = LBN(10, boost_mode=LBN.COMBINATIONS, particle_weights=self.custom_particle_weights,
-            is_training=True)
+        lbn = LBN(10, boost_mode=LBN.COMBINATIONS, particle_weights=self.custom_particle_weights)
         lbn(self.vectors_t, features=self.feature_set).numpy()
 
         # compare all components of the first boosted particle in batch pos 1
@@ -243,14 +228,14 @@ class TestCase(unittest.TestCase):
             def px_plus_py(self):
                 return self.px() + self.py()
 
-        lbn = LBN(10, boost_mode=LBN.PAIRS, is_training=True, feature_factory=MyFeatureFactory)
+        lbn = LBN(10, boost_mode=LBN.PAIRS, feature_factory=MyFeatureFactory)
         self.assertIn("px_plus_py", lbn.available_features)
 
         with self.assertRaises(TypeError):
-            LBN(10, boost_mode=LBN.PAIRS, is_training=True, feature_factory="foo")
+            LBN(10, boost_mode=LBN.PAIRS, feature_factory="foo")
 
     def test_register_feature(self):
-        lbn = LBN(10, boost_mode=LBN.PAIRS, is_training=True)
+        lbn = LBN(10, boost_mode=LBN.PAIRS)
         self.assertNotIn("px_plus_py", lbn.available_features)
 
         @lbn.register_feature
@@ -260,7 +245,7 @@ class TestCase(unittest.TestCase):
         self.assertIn("px_plus_py", lbn.available_features)
 
     def test_external_features(self):
-        lbn = LBN(10, boost_mode=LBN.PAIRS, is_training=True)
+        lbn = LBN(10, boost_mode=LBN.PAIRS)
 
         ext = tf.Variable([[1, 2], [3, 4]], dtype=tf.float32)
         features = lbn(self.vectors_t, features=self.feature_set, external_features=ext).numpy()
@@ -279,7 +264,7 @@ class TestCase(unittest.TestCase):
                 self.count += 1
                 return self.px() + self.py()
 
-        lbn = LBN(10, boost_mode=LBN.PAIRS, is_training=True, feature_factory=MyFeatureFactory)
+        lbn = LBN(10, boost_mode=LBN.PAIRS, feature_factory=MyFeatureFactory)
         self.assertEqual(lbn.feature_factory.count, 0)
 
         lbn(self.vectors_t, features=self.feature_set + ["px_plus_py"]).numpy()
@@ -290,7 +275,7 @@ class TestCase(unittest.TestCase):
 
     def test_features(self):
         lbn = LBN(10, boost_mode=LBN.PAIRS, particle_weights=self.custom_particle_weights,
-            restframe_weights=self.custom_restframe_weights, is_training=True)
+            restframe_weights=self.custom_restframe_weights)
 
         # add a custom feature
         @lbn.register_feature
@@ -328,9 +313,8 @@ class TestCase(unittest.TestCase):
         self.assertAlmostEqual(lbn.feature_factory.px_plus_py().numpy()[1, 0], -36.780174, 4)
 
     def test_keras_layer(self):
-        l = LBNLayer(10, boost_mode=LBN.PAIRS, batch_norm=True, is_training=True)
+        l = LBNLayer(10, boost_mode=LBN.PAIRS, features=self.feature_set, seed=123)
         self.assertIsInstance(l.lbn, LBN)
-        self.assertTrue(l.lbn.batch_norm_center)
 
         # build a custom model
         class Model(tf.keras.models.Model):
@@ -338,20 +322,23 @@ class TestCase(unittest.TestCase):
             def __init__(self):
                 super(Model, self).__init__()
 
-                self.lbn = l
-                self.dense = tf.keras.layers.Dense(1024, activation="elu")
-                self.softmax = tf.keras.layers.Dense(2, activation="softmax")
+                init = tf.keras.initializers.RandomNormal(mean=0., stddev=0.1, seed=123)
 
-            def __call__(self, *args, **kwargs):
+                self.lbn = l
+                self.dense = tf.keras.layers.Dense(1024, activation="elu", kernel_regularizer=init)
+                self.softmax = tf.keras.layers.Dense(2, activation="softmax",
+                    kernel_regularizer=init)
+
+            def call(self, *args, **kwargs):
                 return self.softmax(self.dense(self.lbn(*args, **kwargs)))
 
         model = Model()
-        output = model(self.vectors_t, features=self.feature_set).numpy()
+        output = model(self.vectors_t).numpy()
 
-        self.assertAlmostEqual(output[0, 0], 0.548664 if PY3 else 0.795995, 5)
-        self.assertAlmostEqual(output[0, 1], 0.451337 if PY3 else 0.204005, 5)
-        self.assertAlmostEqual(output[1, 0], 0.394629 if PY3 else 0.177576, 5)
-        self.assertAlmostEqual(output[1, 1], 0.605371 if PY3 else 0.822424, 5)
+        self.assertAlmostEqual(output[0, 0], 0 if PY3 else 1, 5)
+        self.assertAlmostEqual(output[0, 1], 1 if PY3 else 0, 5)
+        self.assertAlmostEqual(output[1, 0], 0 if PY3 else 1, 5)
+        self.assertAlmostEqual(output[1, 1], 1 if PY3 else 0, 5)
 
 
 def create_four_vectors(n, p_low=-100., p_high=100., m_low=0.1, m_high=50., seed=None):
