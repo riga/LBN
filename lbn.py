@@ -163,16 +163,20 @@ class LBN(object):
         # intermediate features
         self._raw_features = None  # raw features before batch normalization, etc
 
+        # external registered features
+        self.registered_features = []
+
         # final output features
         self.features = None
 
-        # initialize the feature factory
-        if feature_factory is None:
-            feature_factory = FeatureFactory
-        elif not issubclass(feature_factory, FeatureFactoryBase):
-            raise TypeError("feature_factory '{}' is not a subclass of FeatureFactoryBase".format(
-                feature_factory))
-        self.feature_factory = feature_factory(self)
+        self.feature_factory = None
+
+        # initialize the feature factory from arguments
+        if feature_factory is not None:
+            if not issubclass(feature_factory, FeatureFactoryBase):
+                raise TypeError("feature_factory '{}' is not a subclass of FeatureFactoryBase".format(
+                    feature_factory))
+            self.feature_factory = feature_factory
 
     @property
     def available_features(self):
@@ -207,15 +211,19 @@ class LBN(object):
             def px_plus_py(ff):
                 return ff.px() + ff.py()
 
-            print("px_plus_py" in lbn.available_features)  # -> True
+            print("px_plus_py" in lbn.available_features)  # -> False 
+            # Features are build after lbn is called for the first time
 
             # or register with a different name
             @lbn.register_feature(name="pxy")
             def px_plus_py(ff):
                 return ff.px() + ff.py()
 
-            print("pxy" in lbn.available_features)  # -> True
+            print("pxy" in lbn.available_features)  # -> False
         """
+        self.registered_features.append({"func": func, "kwargs": kwargs})
+
+    def _register_feature(self, func=None, **kwargs):
         def decorator(func):
             return self.feature_factory._wrap_feature(func, **kwargs)
 
@@ -232,6 +240,13 @@ class LBN(object):
         Builds the LBN structure layer by layer within dedicated variable scopes. *input* must be a
         tensor of the input four-vectors. All *kwargs* are forwarded to :py:meth:`build_features`.
         """
+        # initialize feature factory
+        feature_factory = FeatureFactory
+        self.feature_factory = feature_factory(self)
+        # build registered features
+        for feature in self.registered_features:
+            self._register_feature(feature["func"], **feature["kwargs"])
+
         with tf.name_scope(self.name):
             with tf.name_scope("inputs"):
                 self.handle_input(inputs)
