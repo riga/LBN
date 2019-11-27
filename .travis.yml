@@ -1,0 +1,42 @@
+sudo: required
+
+dist: trusty
+
+language: python
+
+stages:
+  - lint
+  - test
+
+jobs:
+  include:
+    - stage: lint
+      env:
+        - JOB=lint
+      install:
+        - pip install -r requirements.txt
+        - pip install flake8
+      script:
+        - flake8 lbn.py test.py setup.py
+
+    - stage: test
+      services:
+        - docker
+      env:
+        - JOB=test_py2_tf1
+        - IMG=tensorflow/tensorflow:1.13.2
+      install:
+        - docker pull $IMG
+      script:
+        - docker run -t --rm -v `pwd`:/root/lbn -w /root/lbn $IMG python -m unittest test
+
+    - stage: test
+      services:
+        - docker
+      env:
+        - JOB=test_py3_tf2
+        - IMG=tensorflow/tensorflow:2.0.0-py3
+      install:
+        - docker pull $IMG
+      script:
+        - docker run -t --rm -v `pwd`:/root/lbn -w /root/lbn $IMG python -m unittest test

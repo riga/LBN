@@ -1,4 +1,4 @@
-# Lorentz Boost Network (LBN) [![pipeline status](https://git.rwth-aachen.de/3pia/lbn/badges/master/pipeline.svg)](https://git.rwth-aachen.de/3pia/lbn/pipelines)
+# Lorentz Boost Network (LBN) [![Build Status](https://travis-ci.org/riga/LBN.svg?branch=master)](https://travis-ci.org/riga/LBN) [![Package Status](https://badge.fury.io/py/lbn.svg)](https://badge.fury.io/py/lbn)
 
 TensorFlow implementation of the Lorentz Boost Network from [arXiv:1812.09722 [hep-ex]](https://arxiv.org/abs/1812.09722).
 
@@ -58,10 +58,10 @@ Tests should be run for Python 2 and 3 and for TensorFlow 1 and 2. The following
 python -m unittest test
 
 # or via docker, python 2 and tf 1
-docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:1.13.1 python -m unittest test
+docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:1.13.2 python -m unittest test
 
 # or via docker, python 3 and tf 2
-docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:2.0.0a0-py3 python -m unittest test
+docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:2.0.0-py3 python -m unittest test
 ```
 
 
@@ -72,5 +72,5 @@ If you like to contribute, we are happy to receive pull requests. Just make sure
 
 ### Development
 
-- Original source hosted at [RWTH GitLab](https://git.rwth-aachen.de/3pia/lbn)
-- Report issues, questions, feature requests on [RWTH GitLab Issues](https://git.rwth-aachen.de/3pia/lbn/issues)
+- Original source hosted on [GitHub](https://github.com/riga/LBN)
+- Report issues, questions, feature requests on [GitHub Issues](https://github.com/riga/LBN/issues)
