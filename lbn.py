@@ -11,7 +11,7 @@ __license__ = "BSD"
 __credits__ = ["Martin Erdmann", "Erik Geiser", "Yannik Rath", "Marcel Rieger"]
 __contact__ = "https://git.rwth-aachen.de/3pia/lbn"
 __email__ = "marcel.rieger@cern.ch"
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 
 __all__ = ["LBN", "LBNLayer", "FeatureFactoryBase", "FeatureFactory"]
 
@@ -500,10 +500,6 @@ class LBNLayer(tf.keras.layers.Layer):
         # store the seed
         self.seed = kwargs.pop("seed", None)
 
-        # use autograph for tf 2.0
-        if TF2:
-            self.call = tf.function(self.__class__.call.__get__(self))
-
         # create the LBN instance with the remaining arguments
         self.lbn = LBN(*args, **kwargs)
 
@@ -535,9 +531,15 @@ class LBNLayer(tf.keras.layers.Layer):
 
         super(LBNLayer, self).build(input_shape)
 
-    def call(self, inputs):
-        # forward to lbn.__call__
-        return self.lbn(inputs, features=self.feature_names)
+    if TF2:
+        @tf.function
+        def call(self, inputs):
+            # forward to lbn.__call__
+            return self.lbn(inputs, features=self.feature_names)
+    else:
+        def call(self, inputs):
+            # forward to lbn.__call__
+            return self.lbn(inputs, features=self.feature_names)
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.lbn.n_features)
