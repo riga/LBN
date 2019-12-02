@@ -14,11 +14,10 @@ import unittest
 import numpy as np
 import tensorflow as tf
 
-from lbn import LBN, LBNLayer, FeatureFactory
+from lbn import LBN, LBNLayer, FeatureFactory, TF2
 
 
 PY3 = sys.version.startswith("3.")
-TF2 = tf.__version__.startswith("2.")
 
 if not TF2:
     tf.enable_eager_execution()

@@ -16,11 +16,15 @@ __version__ = "1.0.3"
 __all__ = ["LBN", "LBNLayer", "FeatureFactoryBase", "FeatureFactory"]
 
 
-import os
 import functools
 
 import numpy as np
 import tensorflow as tf
+
+
+# tf version flags
+TF1 = tf.__version__.startswith("1.")
+TF2 = tf.__version__.startswith("2.")
 
 
 class LBN(object):
@@ -495,6 +499,10 @@ class LBNLayer(tf.keras.layers.Layer):
 
         # store the seed
         self.seed = kwargs.pop("seed", None)
+
+        # use autograph for tf 2.0
+        if TF2:
+            self.call = tf.function(self.__class__.call.__get__(self))
 
         # create the LBN instance with the remaining arguments
         self.lbn = LBN(*args, **kwargs)
