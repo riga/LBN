@@ -346,19 +346,8 @@ class LBN(object):
         """
         Takes the passed four-vector *inputs* and infers dimensions and some internal tensors.
         """
-        # inputs are expected to be four-vectors with the shape (batch, n_in, 4)
-        # convert them in case they have the shape (batch, 4 * n_in)
-        if len(inputs.shape) == 2 and inputs.shape[-1] % 4 == 0:
-            inputs = tf.reshape(inputs, (-1, inputs.shape[-1] // 4, 4))
-
         # store the input vectors
         self.inputs = inputs
-
-        # infer sizes
-        self.n_in = int(self.inputs.shape[1])
-        self.n_dim = int(self.inputs.shape[2])
-        if self.n_dim != 4:
-            raise Exception("input dimension must be 4 to represent 4-vectors")
 
         # split 4-vector components
         names = ["E", "px", "py", "pz"]
