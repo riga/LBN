@@ -22,8 +22,7 @@ import numpy as np
 import tensorflow as tf
 
 
-# tf version flags
-TF1 = tf.__version__.startswith("1.")
+# tf version flag
 TF2 = tf.__version__.startswith("2.")
 
 
@@ -110,11 +109,13 @@ class LBN(object):
         self.particle_weights = particle_weights
         self.abs_particle_weights = abs_particle_weights
         self.clip_particle_weights = clip_particle_weights
+        self.final_particle_weights = None
 
         # rest frame weigths and settings
         self.restframe_weights = restframe_weights
         self.abs_restframe_weights = abs_restframe_weights
         self.clip_restframe_weights = clip_restframe_weights
+        self.final_restframe_weights = None
 
         # custom weight init parameters in a tuple (mean, stddev)
         self.weight_init = weight_init
@@ -231,34 +232,115 @@ class LBN(object):
         """
         return self.build(*args, **kwargs)
 
-    def build(self, inputs, **kwargs):
+    def build(self, inputs, autograph=False, **kwargs):
         """
         Builds the LBN structure layer by layer within dedicated variable scopes. *input* must be a
-        tensor of the input four-vectors. All *kwargs* are forwarded to :py:meth:`build_features`.
+        tensor of the input four-vectors. When *autograph* is *True* and TensorFlow 2 is available,
+        all operations are wrapped using ``tf.function`` to construct a graph instead of using eager
+        mode. All other *kwargs* are forwarded to :py:meth:`build_features`.
         """
+        # complain when autograh is requested but not available
+        if autograph and not TF2:
+            raise Exception("can only build the LBN using autograph for TF2, but found".format(
+                tf.__version__))
+
+        # infer sizes
+        self.infer_sizes(inputs)
+
+        # setup variables
         with tf.name_scope(self.name):
-            with tf.name_scope("inputs"):
-                self.handle_input(inputs)
+            with tf.name_scope("variables"):
+                self.setup_variable("particle", self.n_particles)
 
-            with tf.name_scope("constants"):
-                self.build_constants()
+                if self.boost_mode != self.COMBINATIONS:
+                    self.setup_variable("restframe", self.n_restframes)
 
-            with tf.name_scope("particles"):
-                self.build_combinations("particle", self.n_particles)
+        # wrap op setup in a function to be able to wrap into tf.function when requested
+        def build_ops(inputs):
+            with tf.name_scope(self.name):
+                with tf.name_scope("constants"):
+                    self.build_constants()
 
-            # rest frames are not built for COMBINATIONS boost mode
-            if self.boost_mode != self.COMBINATIONS:
-                with tf.name_scope("restframes"):
-                    self.build_combinations("restframe", self.n_restframes)
+                with tf.name_scope("inputs"):
+                    self.handle_input(inputs)
 
-            with tf.name_scope("boost"):
-                self.build_boost()
+                with tf.name_scope("particles"):
+                    self.build_combinations("particle")
 
-            with tf.name_scope("features"):
-                self.build_features(**kwargs)
-            self.features = self._raw_features
+                # rest frames are not built for COMBINATIONS boost mode
+                if self.boost_mode != self.COMBINATIONS:
+                    with tf.name_scope("restframes"):
+                        self.build_combinations("restframe")
 
-        return self.features
+                with tf.name_scope("boost"):
+                    self.build_boost()
+
+                with tf.name_scope("features"):
+                    self.build_features(**kwargs)
+
+                self.features = self._raw_features
+
+            return self.features
+
+        fn = tf.function(build_ops) if autograph else build_ops
+        return fn(inputs)
+
+    def infer_sizes(self, inputs):
+        """
+        Infers sizes based on the (dynamic) shape of the input tensor.
+        """
+        # inputs are expected to be four-vectors with the shape (batch, n_in, 4)
+        # convert them in case they have the shape (batch, 4 * n_in)
+        if len(inputs.shape) == 2 and inputs.shape[-1] % 4 == 0:
+            inputs = tf.reshape(inputs, (-1, inputs.shape[-1] // 4, 4))
+
+        # infer sizes
+        self.n_in = int(inputs.shape[1])
+        self.n_dim = int(inputs.shape[2])
+        if self.n_dim != 4:
+            raise Exception("input dimension must be 4 to represent 4-vectors")
+
+    def setup_variable(self, prefix, m):
+        """
+        Sets up the variable tensors representing linear coefficients for the combinations of
+        particles and rest frames. *prefix* must either be ``"particle"`` or ``"restframe"``, and
+        *m* is the corresponding number of combinations.
+        """
+        if prefix not in ("particle", "restframe"):
+            raise ValueError("unknown prefix '{}'".format(prefix))
+
+        weight_name = "{}_weights".format(prefix)
+        weight_shape = (self.n_in, m)
+
+        # when the variable is already set, i.e. passed externally, validate the shape
+        # otherwise, create a new variable
+        W = getattr(self, weight_name, None)
+        if W is not None:
+            # verify the shape
+            shape = tuple(W.shape.as_list())
+            if shape != weight_shape:
+                raise ValueError("the shape of {} {} does not match {}".format(
+                    weight_name, shape, weight_shape))
+        else:
+            # define mean and stddev of weight init
+            if isinstance(self.weight_init, tuple):
+                mean, stddev = self.weight_init
+            else:
+                mean, stddev = 0., 1. / m
+
+            # create and save the variable
+            W = tf.Variable(tf.random.normal(weight_shape, mean, stddev, dtype=tf.float32))
+            setattr(self, weight_name, W)
+
+    def build_constants(self):
+        """
+        Builds the internal constants for the boost matrix.
+        """
+        # 4x4 identity
+        self.I = tf.constant(np.identity(4), tf.float32)
+
+        # U matrix
+        self.U = tf.constant([[-1, 0, 0, 0]] + 3 * [[0, -1, -1, -1]], tf.float32)
 
     def handle_input(self, inputs):
         """
@@ -284,84 +366,52 @@ class LBN(object):
         for t, name in zip(tf.split(self.inputs, split, axis=-1), names):
             setattr(self, "inputs_" + name, tf.squeeze(t, -1))
 
-    def build_constants(self):
-        """
-        Builds the internal constants for the boost matrix.
-        """
-        # 4x4 identity
-        self.I = tf.constant(np.identity(4), tf.float32)
-
-        # U matrix
-        self.U = tf.constant([[-1, 0, 0, 0]] + 3 * [[0, -1, -1, -1]], tf.float32)
-
-    def build_combinations(self, name, m):
+    def build_combinations(self, prefix):
         """
         Builds the combination layers which are quite similiar for particles and rest frames. Hence,
-        *name* must be either ``"particle"`` or ``"restframe"``, and *m* is the corresponding number
-        of combinations.
+        *prefix* must be either ``"particle"`` or ``"restframe"``.
         """
-        if name not in ("particle", "restframe"):
-            raise ValueError("unknown combination name '{}'".format(name))
-
-        # determine the weight tensor shape
-        weight_shape = (self.n_in, m)
+        if prefix not in ("particle", "restframe"):
+            raise ValueError("unknown prefix '{}'".format(prefix))
 
         # name helper
-        name_ = lambda tmpl: tmpl.format(name)
+        name = lambda tmpl: tmpl.format(prefix)
 
-        # build the weight matrix, or check it if already set
-        W = getattr(self, name_("{}_weights"))
-        if W is None:
-            # build a new weight matrix
-            if isinstance(self.weight_init, tuple):
-                mean, stddev = self.weight_init
-            else:
-                mean, stddev = 0., 1. / m
-
-            W = tf.Variable(tf.random.normal(weight_shape, mean, stddev, dtype=tf.float32))
-
-        else:
-            # W is set externally, check the shape, consider batching
-            shape = tuple(W.shape.as_list())
-            if shape != weight_shape:
-                raise ValueError("external {}_weights shape {} does not match {}".format(
-                    name, shape, weight_shape))
-
-        # store as raw weights before applying abs or clipping
-        W = tf.identity(W, name=name_("raw_{}_weights"))
+        # get the weight tensor
+        W = getattr(self, name("{}_weights"))
 
         # apply abs
-        if getattr(self, name_("abs_{}_weights")):
-            W = tf.abs(W, name=name_("abs_{}_weights"))
+        if getattr(self, name("abs_{}_weights")):
+            W = tf.abs(W, name=name("abs_{}_weights"))
 
         # apply clipping
-        clip = getattr(self, name_("clip_{}_weights"))
+        clip = getattr(self, name("clip_{}_weights"))
         if clip is True:
             clip = self.epsilon
         if clip is not False:
-            W = tf.maximum(W, clip, name=name_("clipped_{}_weights"))
+            W = tf.maximum(W, clip, name=name("clipped_{}_weights"))
 
         # assign a name to the final weights
-        W = tf.identity(W, name=name_("{}_weights"))
+        W = tf.identity(W, name=name("{}_weights"))
 
         # create four-vectors of combinations
-        E = tf.matmul(self.inputs_E, W, name=name_("{}s_E"))
-        px = tf.matmul(self.inputs_px, W, name=name_("{}s_px"))
-        py = tf.matmul(self.inputs_py, W, name=name_("{}s_py"))
-        pz = tf.matmul(self.inputs_pz, W, name=name_("{}s_pz"))
+        E = tf.matmul(self.inputs_E, W, name=name("{}s_E"))
+        px = tf.matmul(self.inputs_px, W, name=name("{}s_px"))
+        py = tf.matmul(self.inputs_py, W, name=name("{}s_py"))
+        pz = tf.matmul(self.inputs_pz, W, name=name("{}s_pz"))
 
         # create the full 3- and 4-vector stacks again
-        p = tf.stack([px, py, pz], axis=-1, name=name_("{}s_pvec"))
-        q = tf.stack([E, px, py, pz], axis=-1, name=name_("{}s"))
+        p = tf.stack([px, py, pz], axis=-1, name=name("{}s_pvec"))
+        q = tf.stack([E, px, py, pz], axis=-1, name=name("{}s"))
 
         # save all tensors for later inspection
-        setattr(self, name_("{}_weights"), W)
-        setattr(self, name_("{}s_E"), E)
-        setattr(self, name_("{}s_px"), px)
-        setattr(self, name_("{}s_py"), py)
-        setattr(self, name_("{}s_pz"), pz)
-        setattr(self, name_("{}s_pvec"), p)
-        setattr(self, name_("{}s"), q)
+        setattr(self, name("final_{}_weights"), W)
+        setattr(self, name("{}s_E"), E)
+        setattr(self, name("{}s_px"), px)
+        setattr(self, name("{}s_py"), py)
+        setattr(self, name("{}s_pz"), pz)
+        setattr(self, name("{}s_pvec"), p)
+        setattr(self, name("{}s"), q)
 
     def build_boost(self):
         """

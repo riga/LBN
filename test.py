@@ -159,7 +159,7 @@ class TestCase(unittest.TestCase):
     def test_boosting_pairs(self):
         lbn = LBN(10, boost_mode=LBN.PAIRS, particle_weights=self.custom_particle_weights,
             restframe_weights=self.custom_restframe_weights)
-        lbn(self.vectors_t, features=self.feature_set).numpy()
+        lbn(self.vectors_t, features=self.feature_set)
 
         # compare all components of the first boosted particle in batch pos 1
         particle = lbn.particles.numpy()[1, 0]
@@ -272,7 +272,7 @@ class TestCase(unittest.TestCase):
         lbn.feature_factory.px_plus_py()
         self.assertEqual(lbn.feature_factory.count, 1)
 
-    def test_features(self):
+    def _test_features(self, autograph):
         lbn = LBN(10, boost_mode=LBN.PAIRS, particle_weights=self.custom_particle_weights,
             restframe_weights=self.custom_restframe_weights)
 
@@ -287,29 +287,39 @@ class TestCase(unittest.TestCase):
         ]
         self.assertEqual(set(lbn.available_features), set(all_features))
 
-        lbn(self.vectors_t, features=all_features)
+        features = lbn(self.vectors_t, features=all_features, autograph=autograph).numpy()
+
+        # perform tests at batch pos 1
+        features = features[1]
 
         # make all tests on the first boosted particle at batch pos 1
-        self.assertAlmostEqual(lbn.feature_factory.E().numpy()[1, 0], 217.82007, 4)
-        self.assertAlmostEqual(lbn.feature_factory.px().numpy()[1, 0], -93.470245, 4)
-        self.assertAlmostEqual(lbn.feature_factory.py().numpy()[1, 0], 56.69007, 4)
-        self.assertAlmostEqual(lbn.feature_factory.pz().numpy()[1, 0], -117.862404, 4)
-        self.assertAlmostEqual(lbn.feature_factory.pt().numpy()[1, 0], 109.318115, 4)
-        self.assertAlmostEqual(lbn.feature_factory.p().numpy()[1, 0], 160.75446, 4)
-        self.assertAlmostEqual(lbn.feature_factory.m().numpy()[1, 0], 146.98158, 4)
-        self.assertAlmostEqual(lbn.feature_factory.phi().numpy()[1, 0], 2.5964046, 4)
-        self.assertAlmostEqual(lbn.feature_factory.eta().numpy()[1, 0], -0.9355755, 4)
-        self.assertAlmostEqual(lbn.feature_factory.beta().numpy()[1, 0], 0.7380149, 4)
-        self.assertAlmostEqual(lbn.feature_factory.gamma().numpy()[1, 0], 1.4819548, 4)
+        self.assertAlmostEqual(features[0], 217.82007, 4)
+        self.assertAlmostEqual(features[10], -93.470245, 4)
+        self.assertAlmostEqual(features[20], 56.69007, 4)
+        self.assertAlmostEqual(features[30], -117.862404, 4)
+        self.assertAlmostEqual(features[40], 109.318115, 4)
+        self.assertAlmostEqual(features[50], 160.75446, 4)
+        self.assertAlmostEqual(features[60], 146.98158, 4)
+        self.assertAlmostEqual(features[70], 2.5964046, 4)
+        self.assertAlmostEqual(features[80], -0.9355755, 4)
+        self.assertAlmostEqual(features[90], 0.7380149, 4)
+        self.assertAlmostEqual(features[100], 1.4819548, 4)
 
         # test pairwise features w.r.t. boosted particle 2, i.e., feature pos 0
-        self.assertAlmostEqual(lbn.feature_factory.pair_cos().numpy()[1, 0], 0.64787644, 4)
-        self.assertAlmostEqual(lbn.feature_factory.pair_dr().numpy()[1, 0], 2.6730149, 4)
-        self.assertAlmostEqual(lbn.feature_factory.pair_ds().numpy()[1, 0], -136.8383, 4)
-        self.assertAlmostEqual(lbn.feature_factory.pair_dy().numpy()[1, 0], -1.3652772, 4)
+        self.assertAlmostEqual(features[110], 0.64787644, 4)
+        self.assertAlmostEqual(features[155], 2.6730149, 4)
+        self.assertAlmostEqual(features[200], -136.8383, 4)
+        self.assertAlmostEqual(features[245], -1.3652772, 4)
 
         # test the custom feature
-        self.assertAlmostEqual(lbn.feature_factory.px_plus_py().numpy()[1, 0], -36.780174, 4)
+        self.assertAlmostEqual(features[290], -36.780174, 4)
+
+    def test_features_eager(self):
+        self._test_features(False)
+
+    def test_features_autograph(self):
+        if TF2:
+            self._test_features(True)
 
     def test_keras_layer(self):
         l = LBNLayer(10, boost_mode=LBN.PAIRS, features=self.feature_set, seed=123)
