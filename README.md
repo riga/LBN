@@ -38,6 +38,8 @@ model.add(tf.keras.layers.Dense(1024))
 ...
 ```
 
+For more examples on how to set up the LBN with TensorFlow (eager mode and autograph / `tf.function` ) and Keras, see [this gist](https://gist.github.com/riga/fe13cc42605547adcecb9b92484f06db).
+
 
 ### Installation and dependencies
 
