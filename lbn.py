@@ -526,7 +526,7 @@ class LBNLayer(tf.keras.layers.Layer):
             else:
                 mean, stddev = 0., 1. / m
 
-            weight_shape = (n_in.value, m)
+            weight_shape = (n_in, m)
             weight_name = "{}_weights".format(name)
             weight_init = tf.keras.initializers.RandomNormal(mean=mean, stddev=stddev,
                 seed=self.seed)
