@@ -75,7 +75,7 @@ class LBN(object):
     def __init__(self, n_particles, n_restframes=None, boost_mode=PAIRS, feature_factory=None,
             particle_weights=None, abs_particle_weights=True, clip_particle_weights=False,
             restframe_weights=None, abs_restframe_weights=True, clip_restframe_weights=False,
-            weight_init=None, epsilon=1e-5, name=None):
+            weight_init=None, epsilon=1e-5, name=None, **kwargs):
         super(LBN, self).__init__()
 
         # determine the number of output particles, which depends on the boost mode
@@ -196,6 +196,7 @@ class LBN(object):
 
         return int(self.features.shape[-1])
 
+
     def register_feature(self, func=None, **kwargs):
         """
         Shorthand to register a new feautre to the current :py:attr:`feature_factory` instance. Can
@@ -211,15 +212,14 @@ class LBN(object):
             def px_plus_py(ff):
                 return ff.px() + ff.py()
 
-            print("px_plus_py" in lbn.available_features)  # -> False
-            # Features are build after lbn is called for the first time
+            print("px_plus_py" in lbn.available_features)  # -> True
 
             # or register with a different name
             @lbn.register_feature(name="pxy")
             def px_plus_py(ff):
                 return ff.px() + ff.py()
 
-            print("pxy" in lbn.available_features)  # -> False
+            print("pxy" in lbn.available_features)  # -> True
         """
         self.registered_features.append({"func": func, "kwargs": kwargs})
 
@@ -406,15 +406,15 @@ class LBN(object):
         # to build the boost parameters, reshape E and p tensors so that batch and particle axes
         # are merged, and once the Lambda matrix is built, this reshape is reverted again
         # note: there might be more performant operations in future TF releases
-        E = tf.reshape(restframes_E, [-1, 1])
-        pvec = tf.reshape(restframes_pvec, [-1, 3])
+        E = tf.reshape(restframes_E, [-1, 1], name="particle_E")
+        pvec = tf.reshape(restframes_pvec, [-1, 3], name="particle_p_vec")
 
         # determine the beta vectors
         betavec = pvec / E
 
         # determine the scalar beta and gamma values
-        beta = tf.sqrt(tf.reduce_sum(tf.square(pvec), axis=1)) / tf.squeeze(E, axis=-1)
-        gamma = 1. / tf.sqrt(1. - tf.square(beta) + self.epsilon)
+        beta = tf.divide(tf.sqrt(tf.reduce_sum(tf.square(pvec), axis=1)), tf.squeeze(E, axis=-1), name="particle_beta")
+        gamma = tf.divide(1., tf.sqrt(1. - tf.square(beta) + self.epsilon), name="particle_gamma")
 
         # the e vector, (1, -betavec / beta)^T
         beta = tf.expand_dims(beta, axis=-1)
@@ -502,8 +502,9 @@ class LBNLayer(tf.keras.layers.Layer):
        arguments of this class.
     """
 
-    def __init__(self, *args, **kwargs):
-        super(LBNLayer, self).__init__()
+    def __init__(self, n_particles, *args, **kwargs):
+        # store number of particles for later loading
+        self.n_particles = n_particles
 
         # store names of features to build
         self.feature_names = kwargs.pop("features", None)
@@ -512,7 +513,8 @@ class LBNLayer(tf.keras.layers.Layer):
         self.seed = kwargs.pop("seed", None)
 
         # create the LBN instance with the remaining arguments
-        self.lbn = LBN(*args, **kwargs)
+        self.lbn = LBN(n_particles=n_particles, *args, **kwargs)
+        super(LBNLayer, self).__init__(**kwargs)
 
     def build(self, input_shape):
         # get the number of input vectors
@@ -524,7 +526,7 @@ class LBNLayer(tf.keras.layers.Layer):
             else:
                 mean, stddev = 0., 1. / m
 
-            weight_shape = (n_in, m)
+            weight_shape = (n_in.value, m)
             weight_name = "{}_weights".format(name)
             weight_init = tf.keras.initializers.RandomNormal(mean=mean, stddev=stddev,
                 seed=self.seed)
@@ -548,6 +550,15 @@ class LBNLayer(tf.keras.layers.Layer):
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.lbn.n_features)
+
+    def get_config(self):
+        config = {
+                  'n_particles': self.n_particles,
+                  'features': self.feature_names,
+                  'seed': self.seed,
+                  }
+        base_config = super(LBNLayer, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
 
 
 class FeatureFactoryBase(object):
@@ -817,3 +828,4 @@ def triu_range(n, k=1):
     """
     triu_indices = np.triu_indices(n, k)
     return np.arange(n**2).reshape(n, n)[triu_indices]
+
