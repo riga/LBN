@@ -211,7 +211,7 @@ class LBN(object):
             def px_plus_py(ff):
                 return ff.px() + ff.py()
 
-            print("px_plus_py" in lbn.available_features)  # -> False 
+            print("px_plus_py" in lbn.available_features)  # -> False
             # Features are build after lbn is called for the first time
 
             # or register with a different name
