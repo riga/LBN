@@ -196,7 +196,6 @@ class LBN(object):
 
         return int(self.features.shape[-1])
 
-
     def register_feature(self, func=None, **kwargs):
         """
         Shorthand to register a new feautre to the current :py:attr:`feature_factory` instance. Can
@@ -413,7 +412,8 @@ class LBN(object):
         betavec = pvec / E
 
         # determine the scalar beta and gamma values
-        beta = tf.divide(tf.sqrt(tf.reduce_sum(tf.square(pvec), axis=1)), tf.squeeze(E, axis=-1), name="particle_beta")
+        beta = tf.divide(tf.sqrt(tf.reduce_sum(tf.square(pvec), axis=1)), tf.squeeze(E, axis=-1),
+                         name="particle_beta")
         gamma = tf.divide(1., tf.sqrt(1. - tf.square(beta) + self.epsilon), name="particle_gamma")
 
         # the e vector, (1, -betavec / beta)^T
@@ -552,8 +552,7 @@ class LBNLayer(tf.keras.layers.Layer):
         return (input_shape[0], self.lbn.n_features)
 
     def get_config(self):
-        config = {
-                  'n_particles': self.n_particles,
+        config = {'n_particles': self.n_particles,
                   'features': self.feature_names,
                   'seed': self.seed,
                   }
@@ -828,4 +827,3 @@ def triu_range(n, k=1):
     """
     triu_indices = np.triu_indices(n, k)
     return np.arange(n**2).reshape(n, n)[triu_indices]
-
