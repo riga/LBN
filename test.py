@@ -350,9 +350,34 @@ class TestCase(unittest.TestCase):
         self.assertAlmostEqual(output[1, 0], 0 if PY3 else 1, 5)
         self.assertAlmostEqual(output[1, 1], 1 if PY3 else 0, 5)
 
-        x1 = tf.Variable(tf.constant(self.vectors))
-        x2 = tf.Variable(tf.constant(self.vectors))
+
+    def test_keras_layer_graph_connection(self):
+        l = LBNLayer(10, boost_mode=LBN.PAIRS, features=self.feature_set, seed=123)
+        self.assertIsInstance(l.lbn, LBN)
+
+        # build a custom model
+        class Model(tf.keras.models.Model):
+
+            def __init__(self):
+                super(Model, self).__init__()
+
+                init = tf.keras.initializers.RandomNormal(mean=0., stddev=0.1, seed=123)
+
+                self.lbn = l
+                self.dense = tf.keras.layers.Dense(1024, activation="elu", kernel_regularizer=init)
+                self.softmax = tf.keras.layers.Dense(2, activation="softmax",
+                    kernel_regularizer=init)
+
+            def call(self, *args, **kwargs):
+                return self.softmax(self.dense(self.lbn(*args, **kwargs)))
+
+        model = Model()
+
+        x1 = tf.Variable(tf.ones(self.vectors.shape, dtype=tf.float32))
+        x2 = tf.Variable(tf.ones(self.vectors.shape, dtype=tf.float32))
         with tf.GradientTape(persistent=True) as g:
+            g.watch(x1)
+            g.watch(x2)
             y1 = model(x1)
             y2 = model(x2)
 
@@ -360,8 +385,6 @@ class TestCase(unittest.TestCase):
         self.assertIsNotNone(g.gradient(y2, x2))
         self.assertIsNone(g.gradient(y2, x1))
         self.assertIsNone(g.gradient(y1, x2))
-
-
 
 
     def test_keras_saving(self):
@@ -373,9 +396,7 @@ class TestCase(unittest.TestCase):
         out_tensor = lbnlayer(input_tensor)
         model = tf.keras.Model(input_tensor, out_tensor)
     
-        output = model(self.vectors_t)
         tmp_model_path = "tmp_model.h5"
-
         try:
             model.save(tmp_model_path)
         except:

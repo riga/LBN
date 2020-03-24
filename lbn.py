@@ -78,7 +78,7 @@ class LBN(object):
     def __init__(self, n_particles, n_restframes=None, boost_mode=PAIRS, feature_factory=None,
             particle_weights=None, abs_particle_weights=True, clip_particle_weights=False,
             restframe_weights=None, abs_restframe_weights=True, clip_restframe_weights=False,
-            weight_init=None, epsilon=1e-5, name=None):
+            weight_init=None, epsilon=1e-5, name=None, **kwargs):
         super(LBN, self).__init__()
 
         # determine the number of output particles, which depends on the boost mode
@@ -530,8 +530,9 @@ class LBNLayer(tf.keras.layers.Layer):
        arguments of this class.
     """
 
-    def __init__(self, *args, **kwargs):
-        super(LBNLayer, self).__init__()
+    def __init__(self, n_particles, *args, **kwargs):
+        # store numbers of particles
+        self.n_particles = n_particles
 
         # store names of features to build
         self.feature_names = kwargs.pop("features", None)
@@ -539,8 +540,14 @@ class LBNLayer(tf.keras.layers.Layer):
         # store the seed
         self.seed = kwargs.pop("seed", None)
 
+        # store boost_mode
+        self.boost_mode = kwargs.pop("boost_mode", None)
+
         # create the LBN instance with the remaining arguments
-        self.lbn = LBN(*args, **kwargs)
+        self.lbn = LBN(n_particles, *args, **kwargs)
+
+        # this should be called last
+        super(LBNLayer, self).__init__(**kwargs)
 
     def build(self, input_shape):
         # get the number of input vectors
@@ -582,6 +589,16 @@ class LBNLayer(tf.keras.layers.Layer):
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.lbn.n_features)
+
+    def get_config(self):
+        config = {
+            "n_particles": self.n_particles,
+            "boost_mode": self.boost_mode,
+            "features": self.feature_names,
+            "seed": self.seed,
+        }
+        base_config = super(LBNLayer, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
 
 
 class FeatureFactoryBase(object):
