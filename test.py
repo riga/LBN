@@ -8,6 +8,7 @@ LBN unit tests.
 __all__ = ["TestCase"]
 
 
+import os
 import sys
 import unittest
 
@@ -348,6 +349,51 @@ class TestCase(unittest.TestCase):
         self.assertAlmostEqual(output[0, 1], 1 if PY3 else 0, 5)
         self.assertAlmostEqual(output[1, 0], 0 if PY3 else 1, 5)
         self.assertAlmostEqual(output[1, 1], 1 if PY3 else 0, 5)
+
+        x1 = tf.Variable(tf.constant(self.vectors))
+        x2 = tf.Variable(tf.constant(self.vectors))
+        with tf.GradientTape(persistent=True) as g:
+            y1 = model(x1)
+            y2 = model(x2)
+
+        self.assertIsNotNone(g.gradient(y1, x1))
+        self.assertIsNotNone(g.gradient(y2, x2))
+        self.assertIsNone(g.gradient(y2, x1))
+        self.assertIsNone(g.gradient(y1, x2))
+
+
+
+
+    def test_keras_saving(self):
+        lbnlayer = LBNLayer(10, boost_mode=LBN.PAIRS, features=self.feature_set, seed=123)
+        self.assertIsInstance(lbnlayer.lbn, LBN)
+
+        # build a custom model
+        input_tensor = tf.keras.Input(shape=self.vectors.shape[1:])
+        out_tensor = lbnlayer(input_tensor)
+        model = tf.keras.Model(input_tensor, out_tensor)
+    
+        output = model(self.vectors_t)
+        tmp_model_path = "tmp_model.h5"
+
+        try:
+            model.save(tmp_model_path)
+        except:
+            print("An error occoured during saving")
+            raise
+
+        try:
+            model2 = tf.keras.models.load_model(tmp_model_path, custom_objects={"LBNLayer": LBNLayer})
+        except:
+            print("An Exception occoured during loading")
+            raise
+
+        self.assertEqual(os.path.isfile(tmp_model_path), True)
+
+        try:
+            os.remove(tmp_model_path)
+        except FileNotFoundError:
+            pass
 
 
 def create_four_vectors(n, p_low=-100., p_high=100., m_low=0.1, m_high=50., seed=None):
