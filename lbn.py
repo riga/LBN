@@ -258,10 +258,10 @@ class LBN(object):
         # setup variables
         with tf.name_scope(self.name):
             with tf.name_scope("variables"):
-                self.setup_variable("particle", self.n_particles)
+                self.setup_variable("particle", (self.n_in, self.n_particles), 1)
 
                 if self.boost_mode != self.COMBINATIONS:
-                    self.setup_variable("restframe", self.n_restframes)
+                    self.setup_variable("restframe", (self.n_in, self.n_restframes), 2)
 
         # wrap op setup in a function to be able to wrap into tf.function when requested
         def build_ops(inputs):
@@ -308,44 +308,43 @@ class LBN(object):
         if self.n_dim != 4:
             raise Exception("input dimension must be 4 to represent 4-vectors")
 
-    def setup_variable(self, prefix, m):
+    def setup_variable(self, prefix, shape, seed_offset=0):
         """
         Sets up the variable tensors representing linear coefficients for the combinations of
-        particles and rest frames. *prefix* must either be ``"particle"`` or ``"restframe"``, and
-        *m* is the corresponding number of combinations.
+        particles and rest frames. *prefix* must either be ``"particle"`` or ``"restframe"``.
+        *shape* should be a 2-tuple describing the shape of the weight variable to create. When not
+        *None*, the seed attribute of this instance is incremented by *seed_offset* and passed to
+        the variable constructor.
         """
-        allowed_prefixes = ["particle", "restframe"]
-        if prefix not in allowed_prefixes:
+        if prefix not in ["particle", "restframe"]:
             raise ValueError("unknown prefix '{}'".format(prefix))
 
-        weight_name = "{}_weights".format(prefix)
-        weight_shape = (self.n_in, m)
+        # define the weight name
+        name = "{}_weights".format(prefix)
 
         # when the variable is already set, i.e. passed externally, validate the shape
         # otherwise, create a new variable
-        W = getattr(self, weight_name, None)
+        W = getattr(self, name, None)
         if W is not None:
             # verify the shape
-            shape = tuple(W.shape.as_list())
-            if shape != weight_shape:
-                raise ValueError("the shape of {} {} does not match {}".format(
-                    weight_name, shape, weight_shape))
+            w_shape = tuple(W.shape.as_list())
+            if w_shape != shape:
+                raise ValueError("the shape of variable {} {} does not match {}".format(
+                    name, shape, w_shape))
         else:
             # define mean and stddev of weight init
             if isinstance(self.weight_init, tuple):
                 mean, stddev = self.weight_init
             else:
-                mean, stddev = 0., 1. / m
+                mean, stddev = 0., 1. / shape[1]
 
-            # seed with deterministic offset from prefix index
-            seed = self.seed
-            if seed is not None:
-                seed += allowed_prefixes.index(prefix)
+            # apply the seed offset when not None
+            seed = (self.seed + seed_offset) if self.seed is not None else None
 
             # create and save the variable
-            W = tf.Variable(tf.random.normal(weight_shape, mean, stddev, dtype=tf.float32,
-                seed=seed), trainable=self.trainable)
-            setattr(self, weight_name, W)
+            W = tf.Variable(tf.random.normal(shape, mean, stddev, dtype=tf.float32,
+                seed=seed), name=name, trainable=self.trainable)
+            setattr(self, name, W)
 
     def build_constants(self):
         """
@@ -567,27 +566,13 @@ class LBNLayer(tf.keras.layers.Layer):
         # get the number of input vectors
         n_in = input_shape[-2] if len(input_shape) == 3 else input_shape[-1] // 4
 
-        def add_weight(name, m):
-            if isinstance(self.lbn.weight_init, tuple):
-                mean, stddev = self.lbn.weight_init
-            else:
-                mean, stddev = 0., 1. / m
+        # build the lbn variables and store them on this layer
+        self.lbn.setup_variable("particle", (n_in, self.lbn.n_particles), seed_offset=1)
+        self.particle_weights = self.lbn.particle_weights
 
-            weight_shape = (n_in, m)
-            weight_name = "{}_weights".format(name)
-            weight_init = tf.keras.initializers.RandomNormal(mean=mean, stddev=stddev,
-                seed=self.lbn.seed)
-
-            W = self.add_weight(name=weight_name, shape=weight_shape, initializer=weight_init,
-                trainable=self.trainable)
-
-            setattr(self, weight_name, W)
-            setattr(self.lbn, weight_name, getattr(self, weight_name))
-
-        # add weights, depending on the boost mode
-        add_weight("particle", self.lbn.n_particles)
         if self.lbn.boost_mode != LBN.COMBINATIONS:
-            add_weight("restframe", self.lbn.n_restframes)
+            self.lbn.setup_variable("restframe", (n_in, self.lbn.n_restframes), seed_offset=2)
+            self.restframe_weights = self.lbn.restframe_weights
 
         super(LBNLayer, self).build(input_shape)
 
