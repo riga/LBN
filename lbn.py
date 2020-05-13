@@ -48,7 +48,9 @@ class LBN(object):
     *PRODUCT* mode. It is inferred from *n_particles* for *PAIRS* and *COMBINATIONS*.
 
     *epsilon* is supposed to be a small number that is used in various places for numerical
-    stability. *name* is the main namespace of the LBN and defaults to the class name.
+    stability. When not *None*, *seed* is used to seed random number generation for trainable
+    weights. *trainable* is passed to *tf.Variable* during weight generation. *name* is the main
+    namespace of the LBN and defaults to the class name.
 
     *feature_factory* must be a subclass of :py:class:`FeatureFactoryBase` and provides the
     available, generic mappings from boosted particles to output features of the LBN. If *None*, the
@@ -78,7 +80,7 @@ class LBN(object):
     def __init__(self, n_particles, n_restframes=None, boost_mode=PAIRS, feature_factory=None,
             particle_weights=None, abs_particle_weights=True, clip_particle_weights=False,
             restframe_weights=None, abs_restframe_weights=True, clip_restframe_weights=False,
-            weight_init=None, epsilon=1e-5, name=None, **kwargs):
+            weight_init=None, epsilon=1e-5, seed=None, trainable=True, name=None):
         super(LBN, self).__init__()
 
         # determine the number of output particles, which depends on the boost mode
@@ -122,6 +124,12 @@ class LBN(object):
 
         # epsilon for numerical stability
         self.epsilon = epsilon
+
+        # random seed
+        self.seed = seed
+
+        # trainable flag
+        self.trainable = trainable
 
         # internal name
         self.name = name or self.__class__.__name__
@@ -306,7 +314,8 @@ class LBN(object):
         particles and rest frames. *prefix* must either be ``"particle"`` or ``"restframe"``, and
         *m* is the corresponding number of combinations.
         """
-        if prefix not in ("particle", "restframe"):
+        allowed_prefixes = ["particle", "restframe"]
+        if prefix not in allowed_prefixes:
             raise ValueError("unknown prefix '{}'".format(prefix))
 
         weight_name = "{}_weights".format(prefix)
@@ -328,8 +337,14 @@ class LBN(object):
             else:
                 mean, stddev = 0., 1. / m
 
+            # seed with deterministic offset from prefix index
+            seed = self.seed
+            if seed is not None:
+                seed += allowed_prefixes.index(prefix)
+
             # create and save the variable
-            W = tf.Variable(tf.random.normal(weight_shape, mean, stddev, dtype=tf.float32))
+            W = tf.Variable(tf.random.normal(weight_shape, mean, stddev, dtype=tf.float32,
+                seed=seed), trainable=self.trainable)
             setattr(self, weight_name, W)
 
     def build_constants(self):
@@ -530,24 +545,23 @@ class LBNLayer(tf.keras.layers.Layer):
        arguments of this class.
     """
 
-    def __init__(self, n_particles, *args, **kwargs):
-        # store numbers of particles
-        self.n_particles = n_particles
+    def __init__(self, *args, **kwargs):
+        # store and maybe remove kwargs expected by the layer init
+        layer_kwargs = {
+            "name": kwargs.get("name", None),
+            "dtype": kwargs.pop("dtype", None),
+            "trainable": kwargs.get("trainable", True),
+            "dynamic": kwargs.pop("dynamic", False),
+        }
 
         # store names of features to build
-        self.feature_names = kwargs.pop("features", None)
-
-        # store the seed
-        self.seed = kwargs.pop("seed", None)
-
-        # store boost_mode
-        self.boost_mode = kwargs.pop("boost_mode", None)
+        self._features = kwargs.pop("features", None)
 
         # create the LBN instance with the remaining arguments
-        self.lbn = LBN(n_particles, *args, **kwargs)
+        self.lbn = LBN(*args, **kwargs)
 
-        # this should be called last
-        super(LBNLayer, self).__init__(**kwargs)
+        # layer init
+        super(LBNLayer, self).__init__(**layer_kwargs)
 
     def build(self, input_shape):
         # get the number of input vectors
@@ -562,13 +576,13 @@ class LBNLayer(tf.keras.layers.Layer):
             weight_shape = (n_in, m)
             weight_name = "{}_weights".format(name)
             weight_init = tf.keras.initializers.RandomNormal(mean=mean, stddev=stddev,
-                seed=self.seed)
+                seed=self.lbn.seed)
 
             W = self.add_weight(name=weight_name, shape=weight_shape, initializer=weight_init,
-                trainable=True)
+                trainable=self.trainable)
 
             setattr(self, weight_name, W)
-            setattr(self.lbn, weight_name, W)
+            setattr(self.lbn, weight_name, getattr(self, weight_name))
 
         # add weights, depending on the boost mode
         add_weight("particle", self.lbn.n_particles)
@@ -581,24 +595,30 @@ class LBNLayer(tf.keras.layers.Layer):
         @tf.function
         def call(self, inputs):
             # forward to lbn.__call__
-            return self.lbn(inputs, features=self.feature_names)
+            return self.lbn(inputs, features=self._features)
     else:
         def call(self, inputs):
             # forward to lbn.__call__
-            return self.lbn(inputs, features=self.feature_names)
+            return self.lbn(inputs, features=self._features)
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.lbn.n_features)
 
     def get_config(self):
-        config = {
-            "n_particles": self.n_particles,
-            "boost_mode": self.boost_mode,
-            "features": self.feature_names,
-            "seed": self.seed,
-        }
-        base_config = super(LBNLayer, self).get_config()
-        return dict(list(base_config.items()) + list(config.items()))
+        config = super(LBNLayer, self).get_config()
+        config.update({
+            "n_particles": self.lbn.n_particles,
+            "n_particles": self.lbn.n_restframes,
+            "boost_mode": self.lbn.boost_mode,
+            "abs_particle_weights": self.lbn.abs_particle_weights,
+            "clip_particle_weights": self.lbn.clip_particle_weights,
+            "abs_restframe_weights": self.lbn.abs_restframe_weights,
+            "clip_restframe_weights": self.lbn.clip_restframe_weights,
+            "epsilon": self.lbn.epsilon,
+            "seed": self.lbn.seed,
+            "features": self._features,
+        })
+        return config
 
 
 class FeatureFactoryBase(object):
