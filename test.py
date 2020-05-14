@@ -340,7 +340,8 @@ class TestCase(unittest.TestCase):
         self.assertAlmostEqual(features[290], -36.780174, 4)
 
     def test_keras_layer(self):
-        l = LBNLayer(10, boost_mode=LBN.PAIRS, features=self.feature_set, seed=123)
+        l = LBNLayer(self.vectors_aux_t.shape, n_particles=10, boost_mode=LBN.PAIRS,
+            features=self.feature_set, seed=123)
         self.assertIsInstance(l.lbn, LBN)
 
         # build a custom model
@@ -372,7 +373,8 @@ class TestCase(unittest.TestCase):
             self.assertAlmostEqual(output[1, 1], 0.87603, 5)
 
     def test_keras_layer_graph_connection(self):
-        l = LBNLayer(10, boost_mode=LBN.PAIRS, features=self.feature_set, seed=123)
+        l = LBNLayer((10, 4), n_particles=10, boost_mode=LBN.PAIRS, features=self.feature_set,
+            seed=123)
         self.assertIsInstance(l.lbn, LBN)
 
         # build a custom model
@@ -407,7 +409,8 @@ class TestCase(unittest.TestCase):
         self.assertIsNone(g.gradient(y1, x2))
 
     def test_keras_saving(self):
-        lbnlayer = LBNLayer(10, boost_mode=LBN.PAIRS, features=self.feature_set, seed=123)
+        lbnlayer = LBNLayer(self.vectors.shape, n_particles=10, boost_mode=LBN.PAIRS,
+            features=self.feature_set, seed=123)
         self.assertIsInstance(lbnlayer.lbn, LBN)
 
         # build a custom model

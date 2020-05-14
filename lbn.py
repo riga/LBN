@@ -320,8 +320,11 @@ class LBN(object):
         """
         Infers sizes based on the shape of the input tensor.
         """
-        self.n_in = int(input_shape[1])
-        self.n_dim = int(input_shape[2])
+        if not isinstance(input_shape, (tuple, list, tf.TensorShape)):
+            input_shape = input_shape.shape
+
+        self.n_in = int(input_shape[-2])
+        self.n_dim = int(input_shape[-1])
 
         if self.n_dim < 4:
             raise Exception("input dimension must be at least 4")
@@ -591,12 +594,10 @@ class LBNLayer(tf.keras.layers.Layer):
        arguments of this class.
     """
 
-    def __init__(self, *args, **kwargs):
-        # store and maybe remove kwargs expected by the layer init
+    def __init__(self, input_shape, *args, **kwargs):
+        # store and remove kwargs that are not passed to the LBN but to the layer init
         layer_kwargs = {
-            "name": kwargs.get("name", None),
             "dtype": kwargs.pop("dtype", None),
-            "trainable": kwargs.get("trainable", True),
             "dynamic": kwargs.pop("dynamic", False),
         }
 
@@ -606,13 +607,14 @@ class LBNLayer(tf.keras.layers.Layer):
         # create the LBN instance with the remaining arguments
         self.lbn = LBN(*args, **kwargs)
 
-        # layer init
-        super(LBNLayer, self).__init__(**layer_kwargs)
-
-    def build(self, input_shape):
-        # build the lbn
+        # build the lbn as soon as possible as keras calls Layer.build() too late for autograph
         self.lbn.build(input_shape, features=self._features)
 
+        # layer init
+        super(LBNLayer, self).__init__(name=self.lbn.name, trainable=self.lbn.trainable,
+            **layer_kwargs)
+
+    def build(self, input_shape):
         # store references to the weights
         self.particle_weights = self.lbn.particle_weights
         self.restframe_weights = self.lbn.restframe_weights
@@ -629,6 +631,7 @@ class LBNLayer(tf.keras.layers.Layer):
     def get_config(self):
         config = super(LBNLayer, self).get_config()
         config.update({
+            "input_shape": (self.lbn.n_in, self.lbn.n_dim),
             "n_particles": self.lbn.n_particles,
             "n_restframes": self.lbn.n_restframes,
             "n_auxiliaries": self.lbn.n_auxiliaries,

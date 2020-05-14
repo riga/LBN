@@ -29,7 +29,8 @@ from lbn import LBN, LBNLayer
 model = tf.keras.models.Sequential()
 
 # add the LBN layer
-model.add(LBNLayer(10, boost_mode=LBN.PAIRS))
+input_shape = (6, 4)
+model.add(LBNLayer(input_shape, 10, boost_mode=LBN.PAIRS))
 
 # add a dense layer
 model.add(tf.keras.layers.Dense(1024))
@@ -54,16 +55,15 @@ NumPy and TensorFlow are the only dependencies. Both TensorFlow v1 and v2 are su
 
 ### Testing
 
-Tests should be run for Python 2 and 3 and for TensorFlow 1 and 2. The following commands assume you are root directory of the LBN respository:
+Tests should be run for Python 2 and 3 and for TensorFlow 1 and 2. The following commands assume you are in the root directory of the LBN respository:
 
 ```bash
 python -m unittest test
 
-# or via docker, python 2 and tf 1
-docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:1.13.2 python -m unittest test
-
-# or via docker, python 3 and tf 2
-docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:2.0.0-py3 python -m unittest test
+# or via docker
+for tag in 1.15.2 1.15.2-py3 2.1.0 2.2.0; do
+    docker run --rm -v `pwd`:/root/lbn -w /root/lbn tensorflow/tensorflow:$tag python -m unittest test
+done
 ```
 
 
