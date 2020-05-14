@@ -8,6 +8,7 @@ LBN unit tests.
 __all__ = ["TestCase"]
 
 
+import os
 import sys
 import unittest
 
@@ -272,7 +273,7 @@ class TestCase(unittest.TestCase):
         lbn.feature_factory.px_plus_py()
         self.assertEqual(lbn.feature_factory.count, 1)
 
-    def _test_features(self, autograph):
+    def test_features(self):
         lbn = LBN(10, boost_mode=LBN.PAIRS, particle_weights=self.custom_particle_weights,
             restframe_weights=self.custom_restframe_weights)
 
@@ -287,7 +288,7 @@ class TestCase(unittest.TestCase):
         ]
         self.assertEqual(set(lbn.available_features), set(all_features))
 
-        features = lbn(self.vectors_t, features=all_features, autograph=autograph).numpy()
+        features = lbn(self.vectors_t, features=all_features).numpy()
 
         # perform tests at batch pos 1
         features = features[1]
@@ -313,13 +314,6 @@ class TestCase(unittest.TestCase):
 
         # test the custom feature
         self.assertAlmostEqual(features[290], -36.780174, 4)
-
-    def test_features_eager(self):
-        self._test_features(False)
-
-    def test_features_autograph(self):
-        if TF2:
-            self._test_features(True)
 
     def test_keras_layer(self):
         l = LBNLayer(10, boost_mode=LBN.PAIRS, features=self.feature_set, seed=123)
@@ -348,6 +342,70 @@ class TestCase(unittest.TestCase):
         self.assertAlmostEqual(output[0, 1], 1 if PY3 else 0, 5)
         self.assertAlmostEqual(output[1, 0], 0 if PY3 else 1, 5)
         self.assertAlmostEqual(output[1, 1], 1 if PY3 else 0, 5)
+
+    def test_keras_layer_graph_connection(self):
+        l = LBNLayer(10, boost_mode=LBN.PAIRS, features=self.feature_set, seed=123)
+        self.assertIsInstance(l.lbn, LBN)
+
+        # build a custom model
+        class Model(tf.keras.models.Model):
+
+            def __init__(self):
+                super(Model, self).__init__()
+
+                init = tf.keras.initializers.RandomNormal(mean=0., stddev=0.1, seed=123)
+
+                self.lbn = l
+                self.dense = tf.keras.layers.Dense(1024, activation="elu", kernel_regularizer=init)
+                self.softmax = tf.keras.layers.Dense(2, activation="softmax",
+                    kernel_regularizer=init)
+
+            def call(self, *args, **kwargs):
+                return self.softmax(self.dense(self.lbn(*args, **kwargs)))
+
+        model = Model()
+
+        x1 = tf.Variable(create_four_vectors((2, 10)), dtype=tf.float32)
+        x2 = tf.Variable(create_four_vectors((2, 10)), dtype=tf.float32)
+
+        with tf.GradientTape(persistent=True) as g:
+            y1 = model(x1)
+            y2 = model(x2)
+
+        # ensure gradients are computed properly and not across objects
+        self.assertIsNotNone(g.gradient(y1, x1))
+        self.assertIsNotNone(g.gradient(y2, x2))
+        self.assertIsNone(g.gradient(y2, x1))
+        self.assertIsNone(g.gradient(y1, x2))
+
+    def test_keras_saving(self):
+        lbnlayer = LBNLayer(10, boost_mode=LBN.PAIRS, features=self.feature_set, seed=123)
+        self.assertIsInstance(lbnlayer.lbn, LBN)
+
+        # build a custom model
+        input_tensor = tf.keras.Input(shape=self.vectors.shape[1:])
+        out_tensor = lbnlayer(input_tensor)
+        model = tf.keras.Model(input_tensor, out_tensor)
+
+        tmp_model_path = "tmp_model.h5"
+        try:
+            model.save(tmp_model_path)
+        except:
+            print("An error occoured during saving")
+            raise
+
+        try:
+            tf.keras.models.load_model(tmp_model_path, custom_objects={"LBNLayer": LBNLayer})
+        except:
+            print("An Exception occoured during loading")
+            raise
+
+        self.assertEqual(os.path.isfile(tmp_model_path), True)
+
+        try:
+            os.remove(tmp_model_path)
+        except OSError:
+            pass
 
 
 def create_four_vectors(n, p_low=-100., p_high=100., m_low=0.1, m_high=50., seed=None):

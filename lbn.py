@@ -48,7 +48,9 @@ class LBN(object):
     *PRODUCT* mode. It is inferred from *n_particles* for *PAIRS* and *COMBINATIONS*.
 
     *epsilon* is supposed to be a small number that is used in various places for numerical
-    stability. *name* is the main namespace of the LBN and defaults to the class name.
+    stability. When not *None*, *seed* is used to seed random number generation for trainable
+    weights. *trainable* is passed to *tf.Variable* during weight generation. *name* is the main
+    namespace of the LBN and defaults to the class name.
 
     *feature_factory* must be a subclass of :py:class:`FeatureFactoryBase` and provides the
     available, generic mappings from boosted particles to output features of the LBN. If *None*, the
@@ -78,7 +80,7 @@ class LBN(object):
     def __init__(self, n_particles, n_restframes=None, boost_mode=PAIRS, feature_factory=None,
             particle_weights=None, abs_particle_weights=True, clip_particle_weights=False,
             restframe_weights=None, abs_restframe_weights=True, clip_restframe_weights=False,
-            weight_init=None, epsilon=1e-5, name=None):
+            weight_init=None, epsilon=1e-5, seed=None, trainable=True, name=None):
         super(LBN, self).__init__()
 
         # determine the number of output particles, which depends on the boost mode
@@ -122,6 +124,12 @@ class LBN(object):
 
         # epsilon for numerical stability
         self.epsilon = epsilon
+
+        # random seed
+        self.seed = seed
+
+        # trainable flag
+        self.trainable = trainable
 
         # internal name
         self.name = name or self.__class__.__name__
@@ -179,6 +187,9 @@ class LBN(object):
                 feature_factory))
         self.feature_factory = feature_factory(self)
 
+        # the function that either builds the graph lazily, or can be used as an eager callable
+        self._op = None
+
     @property
     def available_features(self):
         """
@@ -226,41 +237,43 @@ class LBN(object):
 
         return decorator(func) if func else decorator
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, inputs, **kwargs):
         """
-        Shorthand for :py:meth:`build`.
+        Returns the LBN output features for specific *inputs*. It is ensured that the graph or eager
+        callable are lazily created the first time this method is called by forwarding both *inputs*
+        and *kwargs* to :py:meth:`build`.
         """
-        return self.build(*args, **kwargs)
+        # make sure the lbn op is built
+        if self._op is None:
+            self.build(inputs.shape, **kwargs)
 
-    def build(self, inputs, autograph=False, **kwargs):
-        """
-        Builds the LBN structure layer by layer within dedicated variable scopes. *input* must be a
-        tensor of the input four-vectors. When *autograph* is *True* and TensorFlow 2 is available,
-        all operations are wrapped using ``tf.function`` to construct a graph instead of using eager
-        mode. All other *kwargs* are forwarded to :py:meth:`build_features`.
-        """
-        # complain when autograh is requested but not available
-        if autograph and not TF2:
-            raise Exception("can only build the LBN using autograph for TF2, but found".format(
-                tf.__version__))
+        # invoke it
+        return self._op(inputs)
 
-        # infer sizes
-        self.infer_sizes(inputs)
-
-        # setup variables
+    def build(self, input_shape, **kwargs):
+        """
+        Builds the LBN structure layer by layer within dedicated variable scopes. *input_shape* must
+        be a list, tuple or TensorShape object describing the dimensions of the input four-vectors.
+        *kwargs* are forwarded to :py:meth:`build_features`.
+        """
         with tf.name_scope(self.name):
+            # store shape and size information
+            self.infer_sizes(input_shape)
+
+            # setup variables
             with tf.name_scope("variables"):
-                self.setup_variable("particle", self.n_particles)
+                self.setup_variable("particle", (self.n_in, self.n_particles), 1)
 
                 if self.boost_mode != self.COMBINATIONS:
-                    self.setup_variable("restframe", self.n_restframes)
+                    self.setup_variable("restframe", (self.n_in, self.n_restframes), 2)
 
-        # wrap op setup in a function to be able to wrap into tf.function when requested
-        def build_ops(inputs):
+            # constants
+            with tf.name_scope("constants"):
+                self.build_constants()
+
+        # also store the op that can be used to either create a graph or an eager callable
+        def op(inputs):
             with tf.name_scope(self.name):
-                with tf.name_scope("constants"):
-                    self.build_constants()
-
                 with tf.name_scope("inputs"):
                     self.handle_input(inputs)
 
@@ -282,55 +295,55 @@ class LBN(object):
 
             return self.features
 
-        fn = tf.function(build_ops) if autograph else build_ops
-        return fn(inputs)
+        self._op = op
 
-    def infer_sizes(self, inputs):
+    def infer_sizes(self, input_shape):
         """
-        Infers sizes based on the (dynamic) shape of the input tensor.
+        Infers sizes based on the shape of the input tensor.
         """
-        # inputs are expected to be four-vectors with the shape (batch, n_in, 4)
-        # convert them in case they have the shape (batch, 4 * n_in)
-        if len(inputs.shape) == 2 and inputs.shape[-1] % 4 == 0:
-            inputs = tf.reshape(inputs, (-1, inputs.shape[-1] // 4, 4))
+        self.n_in = int(input_shape[1])
+        self.n_dim = int(input_shape[2])
 
-        # infer sizes
-        self.n_in = int(inputs.shape[1])
-        self.n_dim = int(inputs.shape[2])
         if self.n_dim != 4:
             raise Exception("input dimension must be 4 to represent 4-vectors")
 
-    def setup_variable(self, prefix, m):
+    def setup_variable(self, prefix, shape, seed_offset=0):
         """
         Sets up the variable tensors representing linear coefficients for the combinations of
-        particles and rest frames. *prefix* must either be ``"particle"`` or ``"restframe"``, and
-        *m* is the corresponding number of combinations.
+        particles and rest frames. *prefix* must either be ``"particle"`` or ``"restframe"``.
+        *shape* should be a 2-tuple describing the shape of the weight variable to create. When not
+        *None*, the seed attribute of this instance is incremented by *seed_offset* and passed to
+        the variable constructor.
         """
-        if prefix not in ("particle", "restframe"):
+        if prefix not in ["particle", "restframe"]:
             raise ValueError("unknown prefix '{}'".format(prefix))
 
-        weight_name = "{}_weights".format(prefix)
-        weight_shape = (self.n_in, m)
+        # define the weight name
+        name = "{}_weights".format(prefix)
 
         # when the variable is already set, i.e. passed externally, validate the shape
         # otherwise, create a new variable
-        W = getattr(self, weight_name, None)
+        W = getattr(self, name, None)
         if W is not None:
             # verify the shape
-            shape = tuple(W.shape.as_list())
-            if shape != weight_shape:
-                raise ValueError("the shape of {} {} does not match {}".format(
-                    weight_name, shape, weight_shape))
+            w_shape = tuple(W.shape.as_list())
+            if w_shape != shape:
+                raise ValueError("the shape of variable {} {} does not match {}".format(
+                    name, shape, w_shape))
         else:
             # define mean and stddev of weight init
             if isinstance(self.weight_init, tuple):
                 mean, stddev = self.weight_init
             else:
-                mean, stddev = 0., 1. / m
+                mean, stddev = 0., 1. / shape[1]
+
+            # apply the seed offset when not None
+            seed = (self.seed + seed_offset) if self.seed is not None else None
 
             # create and save the variable
-            W = tf.Variable(tf.random.normal(weight_shape, mean, stddev, dtype=tf.float32))
-            setattr(self, weight_name, W)
+            W = tf.Variable(tf.random.normal(shape, mean, stddev, dtype=tf.float32,
+                seed=seed), name=name, trainable=self.trainable)
+            setattr(self, name, W)
 
     def build_constants(self):
         """
@@ -344,7 +357,8 @@ class LBN(object):
 
     def handle_input(self, inputs):
         """
-        Takes the passed four-vector *inputs* and infers dimensions and some internal tensors.
+        Takes the passed four-vector *inputs* and stores internal tensors for further processing and
+        later inspection.
         """
         # store the input vectors
         self.inputs = inputs
@@ -499,6 +513,10 @@ class LBN(object):
         if features is None:
             features = ["E", "px", "py", "pz"]
 
+        # clear the tensor cache when in eager mode
+        if callable(getattr(self.inputs, "numpy", None)):
+            self.feature_factory.clear_cache()
+
         # create the list of feature ops to concat
         concat = []
         for name in features:
@@ -531,57 +549,59 @@ class LBNLayer(tf.keras.layers.Layer):
     """
 
     def __init__(self, *args, **kwargs):
-        super(LBNLayer, self).__init__()
+        # store and maybe remove kwargs expected by the layer init
+        layer_kwargs = {
+            "name": kwargs.get("name", None),
+            "dtype": kwargs.pop("dtype", None),
+            "trainable": kwargs.get("trainable", True),
+            "dynamic": kwargs.pop("dynamic", False),
+        }
 
         # store names of features to build
-        self.feature_names = kwargs.pop("features", None)
-
-        # store the seed
-        self.seed = kwargs.pop("seed", None)
+        self._features = kwargs.pop("features", None)
 
         # create the LBN instance with the remaining arguments
         self.lbn = LBN(*args, **kwargs)
+
+        # layer init
+        super(LBNLayer, self).__init__(**layer_kwargs)
 
     def build(self, input_shape):
         # get the number of input vectors
         n_in = input_shape[-2] if len(input_shape) == 3 else input_shape[-1] // 4
 
-        def add_weight(name, m):
-            if isinstance(self.lbn.weight_init, tuple):
-                mean, stddev = self.lbn.weight_init
-            else:
-                mean, stddev = 0., 1. / m
+        # build the lbn variables and store them on this layer
+        self.lbn.setup_variable("particle", (n_in, self.lbn.n_particles), seed_offset=1)
+        self.particle_weights = self.lbn.particle_weights
 
-            weight_shape = (n_in, m)
-            weight_name = "{}_weights".format(name)
-            weight_init = tf.keras.initializers.RandomNormal(mean=mean, stddev=stddev,
-                seed=self.seed)
-
-            W = self.add_weight(name=weight_name, shape=weight_shape, initializer=weight_init,
-                trainable=True)
-
-            setattr(self, weight_name, W)
-            setattr(self.lbn, weight_name, W)
-
-        # add weights, depending on the boost mode
-        add_weight("particle", self.lbn.n_particles)
         if self.lbn.boost_mode != LBN.COMBINATIONS:
-            add_weight("restframe", self.lbn.n_restframes)
+            self.lbn.setup_variable("restframe", (n_in, self.lbn.n_restframes), seed_offset=2)
+            self.restframe_weights = self.lbn.restframe_weights
 
         super(LBNLayer, self).build(input_shape)
 
-    if TF2:
-        @tf.function
-        def call(self, inputs):
-            # forward to lbn.__call__
-            return self.lbn(inputs, features=self.feature_names)
-    else:
-        def call(self, inputs):
-            # forward to lbn.__call__
-            return self.lbn(inputs, features=self.feature_names)
+    def call(self, inputs):
+        # forward to lbn.__call__
+        return self.lbn(inputs, features=self._features)
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.lbn.n_features)
+
+    def get_config(self):
+        config = super(LBNLayer, self).get_config()
+        config.update({
+            "n_particles": self.lbn.n_particles,
+            "n_restframes": self.lbn.n_restframes,
+            "boost_mode": self.lbn.boost_mode,
+            "abs_particle_weights": self.lbn.abs_particle_weights,
+            "clip_particle_weights": self.lbn.clip_particle_weights,
+            "abs_restframe_weights": self.lbn.abs_restframe_weights,
+            "clip_restframe_weights": self.lbn.clip_restframe_weights,
+            "epsilon": self.lbn.epsilon,
+            "seed": self.lbn.seed,
+            "features": self._features,
+        })
+        return config
 
 
 class FeatureFactoryBase(object):
@@ -592,7 +612,7 @@ class FeatureFactoryBase(object):
     that are used in multiple places and retained for performance purposes.
     """
 
-    excluded_attributes = ["_wrap_feature", "_wrap_features", "lbn"]
+    excluded_attributes = ["_wrap_feature", "_wrap_features", "clear_cache", "lbn"]
 
     def __init__(self, lbn):
         super(FeatureFactoryBase, self).__init__()
@@ -642,7 +662,7 @@ class FeatureFactoryBase(object):
         # register the bound, caching-aware wrapper to this instance
         setattr(self, name, wrapper.__get__(self))
 
-        # store in known feature func if not hidden
+        # store in known feature funcs if not hidden
         if not hidden:
             self._feature_funcs[name] = wrapper
 
@@ -659,13 +679,19 @@ class FeatureFactoryBase(object):
             if name.startswith("__") or name in self.excluded_attributes:
                 continue
 
-            # callable?
+            # not callable?
             func = getattr(self, name)
             if not callable(func):
                 continue
 
             # wrap it
             self._wrap_feature(func, name)
+
+    def clear_cache(self):
+        """
+        Clears the current tensor cache.
+        """
+        self._tensor_cache.clear()
 
 
 class FeatureFactory(FeatureFactoryBase):

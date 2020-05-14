@@ -24,7 +24,29 @@ jobs:
         - docker
       env:
         - JOB=test_py2_tf1
-        - IMG=tensorflow/tensorflow:1.13.2
+        - IMG=tensorflow/tensorflow:1.15.2
+      install:
+        - docker pull $IMG
+      script:
+        - docker run -t --rm -v `pwd`:/root/lbn -w /root/lbn $IMG python -m unittest test
+
+    - stage: test
+      services:
+        - docker
+      env:
+        - JOB=test_py3_tf1
+        - IMG=tensorflow/tensorflow:1.15.2-py3
+      install:
+        - docker pull $IMG
+      script:
+        - docker run -t --rm -v `pwd`:/root/lbn -w /root/lbn $IMG python -m unittest test
+
+    - stage: test
+      services:
+        - docker
+      env:
+        - JOB=test_py2_tf2
+        - IMG=tensorflow/tensorflow:2.1.0
       install:
         - docker pull $IMG
       script:
@@ -35,7 +57,7 @@ jobs:
         - docker
       env:
         - JOB=test_py3_tf2
-        - IMG=tensorflow/tensorflow:2.0.0-py3
+        - IMG=tensorflow/tensorflow:2.2.0
       install:
         - docker pull $IMG
       script:
