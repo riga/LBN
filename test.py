@@ -395,7 +395,7 @@ class TestCase(unittest.TestCase):
             raise
 
         try:
-            model2 = tf.keras.models.load_model(tmp_model_path, custom_objects={"LBNLayer": LBNLayer})
+            tf.keras.models.load_model(tmp_model_path, custom_objects={"LBNLayer": LBNLayer})
         except:
             print("An Exception occoured during loading")
             raise
@@ -404,7 +404,7 @@ class TestCase(unittest.TestCase):
 
         try:
             os.remove(tmp_model_path)
-        except FileNotFoundError:
+        except OSError:
             pass
 
 
