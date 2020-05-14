@@ -187,6 +187,9 @@ class LBN(object):
                 feature_factory))
         self.feature_factory = feature_factory(self)
 
+        # the function that either builds the graph lazily, or can be used as an eager callable
+        self._op = None
+
     @property
     def available_features(self):
         """
@@ -234,41 +237,43 @@ class LBN(object):
 
         return decorator(func) if func else decorator
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, inputs, **kwargs):
         """
-        Shorthand for :py:meth:`build`.
+        Returns the LBN output features for specific *inputs*. It is ensured that the graph or eager
+        callable are lazily created the first time this method is called by forwarding both *inputs*
+        and *kwargs* to :py:meth:`build`.
         """
-        return self.build(*args, **kwargs)
+        # make sure the lbn op is built
+        if self._op is None:
+            self.build(inputs.shape, **kwargs)
 
-    def build(self, inputs, autograph=False, **kwargs):
-        """
-        Builds the LBN structure layer by layer within dedicated variable scopes. *input* must be a
-        tensor of the input four-vectors. When *autograph* is *True* and TensorFlow 2 is available,
-        all operations are wrapped using ``tf.function`` to construct a graph instead of using eager
-        mode. All other *kwargs* are forwarded to :py:meth:`build_features`.
-        """
-        # complain when autograh is requested but not available
-        if autograph and not TF2:
-            raise Exception("can only build the LBN using autograph for TF2, but found".format(
-                tf.__version__))
+        # invoke it
+        return self._op(inputs)
 
-        # infer sizes
-        self.infer_sizes(inputs)
-
-        # setup variables
+    def build(self, input_shape, **kwargs):
+        """
+        Builds the LBN structure layer by layer within dedicated variable scopes. *input_shape* must
+        be a list, tuple or TensorShape object describing the dimensions of the input four-vectors.
+        *kwargs* are forwarded to :py:meth:`build_features`.
+        """
         with tf.name_scope(self.name):
+            # store shape and size information
+            self.infer_sizes(input_shape)
+
+            # setup variables
             with tf.name_scope("variables"):
                 self.setup_variable("particle", (self.n_in, self.n_particles), 1)
 
                 if self.boost_mode != self.COMBINATIONS:
                     self.setup_variable("restframe", (self.n_in, self.n_restframes), 2)
 
-        # wrap op setup in a function to be able to wrap into tf.function when requested
-        def build_ops(inputs):
-            with tf.name_scope(self.name):
-                with tf.name_scope("constants"):
-                    self.build_constants()
+            # constants
+            with tf.name_scope("constants"):
+                self.build_constants()
 
+        # also store the op that can be used to either create a graph or an eager callable
+        def op(inputs):
+            with tf.name_scope(self.name):
                 with tf.name_scope("inputs"):
                     self.handle_input(inputs)
 
@@ -290,21 +295,15 @@ class LBN(object):
 
             return self.features
 
-        fn = tf.function(build_ops) if autograph else build_ops
-        return fn(inputs)
+        self._op = op
 
-    def infer_sizes(self, inputs):
+    def infer_sizes(self, input_shape):
         """
-        Infers sizes based on the (dynamic) shape of the input tensor.
+        Infers sizes based on the shape of the input tensor.
         """
-        # inputs are expected to be four-vectors with the shape (batch, n_in, 4)
-        # convert them in case they have the shape (batch, 4 * n_in)
-        if len(inputs.shape) == 2 and inputs.shape[-1] % 4 == 0:
-            inputs = tf.reshape(inputs, (-1, inputs.shape[-1] // 4, 4))
+        self.n_in = int(input_shape[1])
+        self.n_dim = int(input_shape[2])
 
-        # infer sizes
-        self.n_in = int(inputs.shape[1])
-        self.n_dim = int(inputs.shape[2])
         if self.n_dim != 4:
             raise Exception("input dimension must be 4 to represent 4-vectors")
 
@@ -358,7 +357,8 @@ class LBN(object):
 
     def handle_input(self, inputs):
         """
-        Takes the passed four-vector *inputs* and infers dimensions and some internal tensors.
+        Takes the passed four-vector *inputs* and stores internal tensors for further processing and
+        later inspection.
         """
         # store the input vectors
         self.inputs = inputs
@@ -513,6 +513,10 @@ class LBN(object):
         if features is None:
             features = ["E", "px", "py", "pz"]
 
+        # clear the tensor cache when in eager mode
+        if callable(getattr(self.inputs, "numpy", None)):
+            self.feature_factory.clear_cache()
+
         # create the list of feature ops to concat
         concat = []
         for name in features:
@@ -576,15 +580,9 @@ class LBNLayer(tf.keras.layers.Layer):
 
         super(LBNLayer, self).build(input_shape)
 
-    if TF2:
-        @tf.function
-        def call(self, inputs):
-            # forward to lbn.__call__
-            return self.lbn(inputs, features=self._features)
-    else:
-        def call(self, inputs):
-            # forward to lbn.__call__
-            return self.lbn(inputs, features=self._features)
+    def call(self, inputs):
+        # forward to lbn.__call__
+        return self.lbn(inputs, features=self._features)
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.lbn.n_features)
@@ -614,7 +612,7 @@ class FeatureFactoryBase(object):
     that are used in multiple places and retained for performance purposes.
     """
 
-    excluded_attributes = ["_wrap_feature", "_wrap_features", "lbn"]
+    excluded_attributes = ["_wrap_feature", "_wrap_features", "clear_cache", "lbn"]
 
     def __init__(self, lbn):
         super(FeatureFactoryBase, self).__init__()
@@ -664,7 +662,7 @@ class FeatureFactoryBase(object):
         # register the bound, caching-aware wrapper to this instance
         setattr(self, name, wrapper.__get__(self))
 
-        # store in known feature func if not hidden
+        # store in known feature funcs if not hidden
         if not hidden:
             self._feature_funcs[name] = wrapper
 
@@ -681,13 +679,19 @@ class FeatureFactoryBase(object):
             if name.startswith("__") or name in self.excluded_attributes:
                 continue
 
-            # callable?
+            # not callable?
             func = getattr(self, name)
             if not callable(func):
                 continue
 
             # wrap it
             self._wrap_feature(func, name)
+
+    def clear_cache(self):
+        """
+        Clears the current tensor cache.
+        """
+        self._tensor_cache.clear()
 
 
 class FeatureFactory(FeatureFactoryBase):
