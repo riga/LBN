@@ -189,7 +189,7 @@ class LBN(object):
         self.boosted_particles = None
 
         # features
-        self.boosted_features = None  #  features of boosted particles
+        self.boosted_features = None  # features of boosted particles
         self.aux_features = None  # auxiliary features (batch, n_in * n_aux, n_auxiliaries)
         self.features = None  # final, combined output features
 
