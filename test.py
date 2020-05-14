@@ -40,6 +40,12 @@ class TestCase(unittest.TestCase):
         self.vectors = create_four_vectors((2, 10))
         self.vectors_t = tf.constant(self.vectors, dtype=tf.float32)
 
+        # create a version with auxiliary features
+        self.n_aux = 2
+        self.vectors_aux = np.random.uniform(-1., 1., (2, 10, 4 + self.n_aux))
+        self.vectors_aux[..., :4] = self.vectors
+        self.vectors_aux_t = tf.constant(self.vectors_aux, dtype=tf.float32)
+
         # common feature set
         self.feature_set = ["E", "pt", "eta", "phi", "m", "pair_cos"]
 
@@ -57,6 +63,8 @@ class TestCase(unittest.TestCase):
             70 * [0],
 
         ], shape=[10, 10], dtype=tf.float32)
+        self.custom_aux_weights = tf.constant(self.n_aux * 100 * [1],
+            shape=[self.n_aux * 10, 10], dtype=tf.float32)
 
     def test_vectors_seed(self):
         self.assertAlmostEqual(np.sum(self.vectors), 1646.26998736)
@@ -118,31 +126,34 @@ class TestCase(unittest.TestCase):
     def test_post_build_attributes(self):
         attrs = [
             "particle_weights", "abs_particle_weights", "clip_particle_weights",
-            "restframe_weights", "abs_restframe_weights", "clip_restframe_weights", "n_in", "n_dim",
-            "I", "U", "inputs", "inputs_E", "inputs_px", "inputs_py", "inputs_pz", "particles_E",
-            "particles_px", "particles_py", "particles_pz", "particles_pvec", "particles",
-            "restframes_E", "restframes_px", "restframes_py", "restframes_pz", "restframes_pvec",
-            "restframes", "Lambda", "boosted_particles", "_raw_features", "features",
+            "restframe_weights", "abs_restframe_weights", "clip_restframe_weights", "aux_weights",
+            "n_in", "n_dim", "n_aux", "I", "U", "inputs", "inputs_E", "inputs_px", "inputs_py",
+            "inputs_pz", "particles_E", "particles_px", "particles_py", "particles_pz",
+            "inputs_aux", "particles_pvec", "particles", "restframes_E", "restframes_px",
+            "restframes_py", "restframes_pz", "restframes_pvec", "restframes", "Lambda",
+            "boosted_particles", "boosted_features", "aux_features", "features",
         ]
 
         lbn = LBN(10, boost_mode=LBN.PAIRS)
         for attr in attrs:
             self.assertIn(getattr(lbn, attr), (None, True, False))
 
-        lbn(self.vectors_t, features=self.feature_set).numpy()
+        lbn(self.vectors_aux_t, features=self.feature_set).numpy()
         for attr in attrs:
             self.assertIsNotNone(getattr(lbn, attr), None)
 
     def test_custom_weights(self):
         lbn = LBN(10, boost_mode=LBN.PAIRS, particle_weights=self.custom_particle_weights,
-            restframe_weights=self.custom_restframe_weights)
-        lbn(self.vectors_t, features=self.feature_set).numpy()
+            restframe_weights=self.custom_restframe_weights, aux_weights=self.custom_aux_weights)
+        lbn(self.vectors_aux_t, features=self.feature_set).numpy()
 
         self.assertEqual(lbn.particle_weights.numpy().shape, (10, 10))
         self.assertEqual(lbn.restframe_weights.numpy().shape, (10, 10))
+        self.assertEqual(lbn.aux_weights.numpy().shape, (20, 10))
 
         self.assertEqual(np.sum(lbn.particle_weights.numpy()), 3)
         self.assertEqual(np.sum(lbn.restframe_weights.numpy()), 3)
+        self.assertEqual(np.sum(lbn.aux_weights.numpy()), 200)
 
         # compare sum of vector components of first combined particles and restframes in batch pos 1
         target_particle_sum = np.sum(self.vectors[1, 0] + self.vectors[1, 1])
@@ -244,6 +255,19 @@ class TestCase(unittest.TestCase):
 
         self.assertIn("px_plus_py", lbn.available_features)
 
+    def test_aux_features(self):
+        lbn = LBN(10, boost_mode=LBN.PAIRS)
+
+        features = lbn(self.vectors_aux_t, features=self.feature_set).numpy()
+
+        self.assertEqual(lbn.n_dim, 6)
+        self.assertEqual(lbn.n_aux, 2)
+        self.assertEqual(lbn.n_auxiliaries, 10)
+        self.assertEqual(lbn.aux_weights.shape, (20, 10))
+
+        self.assertEqual(features.shape[1], lbn.n_features)
+        self.assertEqual(features.shape, (2, 105))
+
     def test_external_features(self):
         lbn = LBN(10, boost_mode=LBN.PAIRS)
 
@@ -336,12 +360,16 @@ class TestCase(unittest.TestCase):
                 return self.softmax(self.dense(self.lbn(*args, **kwargs)))
 
         model = Model()
-        output = model(self.vectors_t).numpy()
+        output = model(self.vectors_aux_t).numpy()
 
-        self.assertAlmostEqual(output[0, 0], 0 if PY3 else 1, 5)
-        self.assertAlmostEqual(output[0, 1], 1 if PY3 else 0, 5)
-        self.assertAlmostEqual(output[1, 0], 0 if PY3 else 1, 5)
-        self.assertAlmostEqual(output[1, 1], 1 if PY3 else 0, 5)
+        self.assertEqual(output.shape, (2, 2))
+
+        # the following value comparisons will fail for TF 2.1 due to a seeding bug
+        if not tf.__version__.startswith("2.1."):
+            self.assertAlmostEqual(output[0, 0], 0.36806, 5)
+            self.assertAlmostEqual(output[0, 1], 0.63194, 5)
+            self.assertAlmostEqual(output[1, 0], 0.12397, 5)
+            self.assertAlmostEqual(output[1, 1], 0.87603, 5)
 
     def test_keras_layer_graph_connection(self):
         l = LBNLayer(10, boost_mode=LBN.PAIRS, features=self.feature_set, seed=123)

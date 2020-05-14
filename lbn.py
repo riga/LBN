@@ -6,7 +6,7 @@ TensorFlow implementation of the Lorentz Boost Network (LBN). https://arxiv.org/
 
 
 __author__ = "Marcel Rieger"
-__copyright__ = "Copyright 2018-2019, Marcel Rieger"
+__copyright__ = "Copyright 2018-2020, Marcel Rieger"
 __license__ = "BSD"
 __credits__ = ["Martin Erdmann", "Erik Geiser", "Yannik Rath", "Marcel Rieger"]
 __contact__ = "https://github.com/riga/LBN"
@@ -66,6 +66,14 @@ class LBN(object):
     *True*, particle (rest frame) weights are clipped at *epsilon*, or at the passed value if it is
     not a boolean. Note that the abs operation is applied before clipping.
 
+    When the number of features per input particle is larger than four, the subsequent values are
+    interpreted as auxiliary features. Similar to the combined particles and restframes, these
+    features are subject to linear combinations to create new, embedded representations. The number
+    number of combinations, *n_auxiliaries*, defaults to the number of boosted output particles.
+    Their features are concatenated to the vector of output features. The weight tensor
+    *aux_weights* is used to create the combined feautres. When given, it should have the shape
+    ``(n_in * (n_dim - 4)) x n_auxiliaries``.
+
     Instances of this class store most of the intermediate tensors (such as inputs, combinations
     weights, boosted particles, boost matrices, raw features, etc) for later inspection. Note that
     most of these tensors are set after :py:meth:`build` (or the :py:meth:`__call__` shorthand as
@@ -77,10 +85,11 @@ class LBN(object):
     PRODUCT = "product"
     COMBINATIONS = "combinations"
 
-    def __init__(self, n_particles, n_restframes=None, boost_mode=PAIRS, feature_factory=None,
-            particle_weights=None, abs_particle_weights=True, clip_particle_weights=False,
-            restframe_weights=None, abs_restframe_weights=True, clip_restframe_weights=False,
-            weight_init=None, epsilon=1e-5, seed=None, trainable=True, name=None):
+    def __init__(self, n_particles, n_restframes=None, n_auxiliaries=None, boost_mode=PAIRS,
+            feature_factory=None, particle_weights=None, abs_particle_weights=True,
+            clip_particle_weights=False, restframe_weights=None, abs_restframe_weights=True,
+            clip_restframe_weights=False, aux_weights=None, weight_init=None, epsilon=1e-5,
+            seed=None, trainable=True, name=None):
         super(LBN, self).__init__()
 
         # determine the number of output particles, which depends on the boost mode
@@ -106,6 +115,7 @@ class LBN(object):
         self.boost_mode = boost_mode
         self.n_particles = n_particles
         self.n_restframes = n_restframes
+        self.n_auxiliaries = n_auxiliaries or self.n_out
 
         # particle weights and settings
         self.particle_weights = particle_weights
@@ -118,6 +128,9 @@ class LBN(object):
         self.abs_restframe_weights = abs_restframe_weights
         self.clip_restframe_weights = clip_restframe_weights
         self.final_restframe_weights = None
+
+        # auxiliary weights
+        self.aux_weights = aux_weights
 
         # custom weight init parameters in a tuple (mean, stddev)
         self.weight_init = weight_init
@@ -136,7 +149,8 @@ class LBN(object):
 
         # sizes that are set during build
         self.n_in = None  # number of input particles
-        self.n_dim = None  # size per input vector, must be four
+        self.n_dim = None  # size per input vector, must be four or higher
+        self.n_aux = None  # size of auxiliary features per input vector (n_dim - 4)
 
         # constants
         self.I = None  # the I matrix
@@ -150,6 +164,7 @@ class LBN(object):
         self.inputs_px = None  # px column of inputs
         self.inputs_py = None  # py column of inputs
         self.inputs_pz = None  # pz column of inputs
+        self.inputs_aux = None  # auxiliary columns of inputs
 
         # tensors of particle combinations
         self.particles_E = None  # energy column of combined particles
@@ -167,17 +182,16 @@ class LBN(object):
         self.restframes_pvec = None  # p vectors of combined restframes
         self.restframes = None  # stacked 4-vectors of combined restframes
 
-        # Lorentz boost matrix with shape (batch, n_out, 4, 4)
+        # Lorentz boost matrix (batch, n_out, 4, 4)
         self.Lambda = None
 
-        # boosted particles with shape (batch, n_out, 4)
+        # boosted particles (batch, n_out, 4)
         self.boosted_particles = None
 
-        # intermediate features
-        self._raw_features = None  # raw features before batch normalization, etc
-
-        # final output features
-        self.features = None
+        # features
+        self.boosted_features = None  #  features of boosted particles
+        self.aux_features = None  # auxiliary features (batch, n_in * n_aux, n_auxiliaries)
+        self.features = None  # final, combined output features
 
         # initialize the feature factory
         if feature_factory is None:
@@ -267,6 +281,9 @@ class LBN(object):
                 if self.boost_mode != self.COMBINATIONS:
                     self.setup_variable("restframe", (self.n_in, self.n_restframes), 2)
 
+                if self.n_aux > 0:
+                    self.setup_variable("aux", (self.n_in * self.n_aux, self.n_auxiliaries), 3)
+
             # constants
             with tf.name_scope("constants"):
                 self.build_constants()
@@ -289,9 +306,11 @@ class LBN(object):
                     self.build_boost()
 
                 with tf.name_scope("features"):
-                    self.build_features(**kwargs)
+                    if self.n_aux > 0:
+                        with tf.name_scope("auxiliary"):
+                            self.build_auxiliary()
 
-                self.features = self._raw_features
+                    self.build_features(**kwargs)
 
             return self.features
 
@@ -304,18 +323,19 @@ class LBN(object):
         self.n_in = int(input_shape[1])
         self.n_dim = int(input_shape[2])
 
-        if self.n_dim != 4:
-            raise Exception("input dimension must be 4 to represent 4-vectors")
+        if self.n_dim < 4:
+            raise Exception("input dimension must be at least 4")
+        self.n_aux = self.n_dim - 4
 
     def setup_variable(self, prefix, shape, seed_offset=0):
         """
         Sets up the variable tensors representing linear coefficients for the combinations of
-        particles and rest frames. *prefix* must either be ``"particle"`` or ``"restframe"``.
-        *shape* should be a 2-tuple describing the shape of the weight variable to create. When not
-        *None*, the seed attribute of this instance is incremented by *seed_offset* and passed to
-        the variable constructor.
+        particles and rest frames. *prefix* must either be ``"particle"``, ``"restframe"`` or
+        ``"aux"``. *shape* should be a 2-tuple describing the shape of the weight variable to
+        create. When not *None*, the seed attribute of this instance is incremented by *seed_offset*
+        and passed to the variable constructor.
         """
-        if prefix not in ["particle", "restframe"]:
+        if prefix not in ["particle", "restframe", "aux"]:
             raise ValueError("unknown prefix '{}'".format(prefix))
 
         # define the weight name
@@ -357,17 +377,21 @@ class LBN(object):
 
     def handle_input(self, inputs):
         """
-        Takes the passed four-vector *inputs* and stores internal tensors for further processing and
-        later inspection.
+        Takes the passed *inputs* and stores internal tensors for further processing and later
+        inspection.
         """
         # store the input vectors
         self.inputs = inputs
 
-        # split 4-vector components
-        names = ["E", "px", "py", "pz"]
-        split = [1, 1, 1, 1]
-        for t, name in zip(tf.split(self.inputs, split, axis=-1), names):
-            setattr(self, "inputs_" + name, tf.squeeze(t, -1))
+        # also store the four-vector components
+        self.inputs_E = self.inputs[..., 0]
+        self.inputs_px = self.inputs[..., 1]
+        self.inputs_py = self.inputs[..., 2]
+        self.inputs_pz = self.inputs[..., 3]
+
+        # split auxiliary inputs
+        if self.n_aux > 0:
+            self.inputs_aux = self.inputs[..., 4:]
 
     def build_combinations(self, prefix):
         """
@@ -502,6 +526,18 @@ class LBN(object):
         # remove the last dimension resulting from multiplication and save
         self.boosted_particles = tf.squeeze(boosted_particles, axis=-1, name="boosted_particles")
 
+    def build_auxiliary(self):
+        """
+        Build combinations of auxiliary input features using the same approach as for particles and
+        restframes.
+        """
+        if self.n_aux <= 0:
+            raise Exception("cannot build auxiliary features when n_aux is not positive")
+
+        # build the features via a simple matmul
+        self.aux_features = tf.matmul(tf.reshape(self.inputs_aux, [-1, self.n_in * self.n_aux]),
+            self.aux_weights, name="aux_features")
+
     def build_features(self, features=None, external_features=None):
         """
         Builds the output features. *features* should be a list of feature names as registered to
@@ -525,6 +561,13 @@ class LBN(object):
                 raise ValueError("unknown feature '{}'".format(name))
             concat.append(func())
 
+        # save intermediate boosted features
+        self.boosted_features = tf.concat(concat, axis=-1)
+
+        # add auxiliary features
+        if self.n_aux > 0:
+            concat.append(self.aux_features)
+
         # add external features
         if external_features is not None:
             if isinstance(external_features, (list, tuple)):
@@ -532,8 +575,8 @@ class LBN(object):
             else:
                 concat.append(external_features)
 
-        # save raw features
-        self._raw_features = tf.concat(concat, axis=-1)
+        # save combined features
+        self.features = tf.concat(concat, axis=-1)
 
 
 class LBNLayer(tf.keras.layers.Layer):
@@ -567,22 +610,18 @@ class LBNLayer(tf.keras.layers.Layer):
         super(LBNLayer, self).__init__(**layer_kwargs)
 
     def build(self, input_shape):
-        # get the number of input vectors
-        n_in = input_shape[-2] if len(input_shape) == 3 else input_shape[-1] // 4
+        # build the lbn
+        self.lbn.build(input_shape, features=self._features)
 
-        # build the lbn variables and store them on this layer
-        self.lbn.setup_variable("particle", (n_in, self.lbn.n_particles), seed_offset=1)
+        # store references to the weights
         self.particle_weights = self.lbn.particle_weights
-
-        if self.lbn.boost_mode != LBN.COMBINATIONS:
-            self.lbn.setup_variable("restframe", (n_in, self.lbn.n_restframes), seed_offset=2)
-            self.restframe_weights = self.lbn.restframe_weights
+        self.restframe_weights = self.lbn.restframe_weights
+        self.aux_weights = self.lbn.aux_weights
 
         super(LBNLayer, self).build(input_shape)
 
     def call(self, inputs):
-        # forward to lbn.__call__
-        return self.lbn(inputs, features=self._features)
+        return self.lbn(inputs)
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.lbn.n_features)
@@ -592,6 +631,7 @@ class LBNLayer(tf.keras.layers.Layer):
         config.update({
             "n_particles": self.lbn.n_particles,
             "n_restframes": self.lbn.n_restframes,
+            "n_auxiliaries": self.lbn.n_auxiliaries,
             "boost_mode": self.lbn.boost_mode,
             "abs_particle_weights": self.lbn.abs_particle_weights,
             "clip_particle_weights": self.lbn.clip_particle_weights,
