@@ -593,7 +593,7 @@ class LBNLayer(tf.keras.layers.Layer):
         config = super(LBNLayer, self).get_config()
         config.update({
             "n_particles": self.lbn.n_particles,
-            "n_particles": self.lbn.n_restframes,
+            "n_restframes": self.lbn.n_restframes,
             "boost_mode": self.lbn.boost_mode,
             "abs_particle_weights": self.lbn.abs_particle_weights,
             "clip_particle_weights": self.lbn.clip_particle_weights,
