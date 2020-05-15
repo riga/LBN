@@ -268,6 +268,15 @@ class TestCase(unittest.TestCase):
         self.assertEqual(features.shape[1], lbn.n_features)
         self.assertEqual(features.shape, (2, 105))
 
+    def test_external_features(self):
+        lbn = LBN(10, boost_mode=LBN.PAIRS)
+
+        ext = tf.Variable([[1, 2], [3, 4]], dtype=tf.float32)
+        features = lbn(self.vectors_t, features=self.feature_set, external_features=ext).numpy()
+
+        self.assertEqual(features.shape[1], lbn.n_features)
+        self.assertEqual(features.shape, (2, 97))
+
     def test_feature_caching(self):
         class MyFeatureFactory(FeatureFactory):
 
@@ -331,8 +340,9 @@ class TestCase(unittest.TestCase):
         self.assertAlmostEqual(features[290], -36.780174, 4)
 
     def test_keras_layer(self):
+        ext = tf.Variable([[1, 2], [3, 4]], dtype=tf.float32)
         l = LBNLayer(self.vectors_aux_t.shape, n_particles=10, boost_mode=LBN.PAIRS,
-            features=self.feature_set, seed=123)
+            features=self.feature_set, external_features=ext, seed=123)
         self.assertIsInstance(l.lbn, LBN)
 
         # build a custom model
@@ -353,21 +363,8 @@ class TestCase(unittest.TestCase):
 
         model = Model()
         output = model(self.vectors_aux_t).numpy()
-        print(output)
 
         self.assertEqual(output.shape, (2, 2))
-
-        # value comparisons differ in TF 2.1 due to a seeding bug
-        if tf.__version__.startswith("2.1."):
-            self.assertAlmostEqual(output[0, 0], 0., 2)
-            self.assertAlmostEqual(output[0, 1], 1., 2)
-            self.assertAlmostEqual(output[1, 0], 0., 2)
-            self.assertAlmostEqual(output[1, 1], 1., 2)
-        else:
-            self.assertAlmostEqual(output[0, 0], 1., 5)
-            self.assertAlmostEqual(output[0, 1], 0., 5)
-            self.assertAlmostEqual(output[1, 0], 1., 5)
-            self.assertAlmostEqual(output[1, 1], 0., 5)
 
     def test_keras_layer_graph_connection(self):
         l = LBNLayer((10, 4), n_particles=10, boost_mode=LBN.PAIRS, features=self.feature_set,

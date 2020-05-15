@@ -541,11 +541,12 @@ class LBN(object):
         self.aux_features = tf.matmul(tf.reshape(self.inputs_aux, [-1, self.n_in * self.n_aux]),
             self.aux_weights, name="aux_features")
 
-    def build_features(self, features=None):
+    def build_features(self, features=None, external_features=None):
         """
         Builds the output features. *features* should be a list of feature names as registered to
         the :py:attr:`feature_factory` instance. When *None*, the default features
-        ``["E", "px", "py", "pz"]`` are built.
+        ``["E", "px", "py", "pz"]`` are built. *external_features* can be a list of tensors of
+        externally produced features, that are concatenated with the built features.
         """
         # default to reshaped 4-vector elements
         if features is None:
@@ -569,6 +570,13 @@ class LBN(object):
         # add auxiliary features
         if self.n_aux > 0:
             concat.append(self.aux_features)
+
+        # add external features
+        if external_features is not None:
+            if isinstance(external_features, (list, tuple)):
+                concat.extend(list(external_features))
+            else:
+                concat.append(external_features)
 
         # save combined features
         self.features = tf.concat(concat, axis=-1)
@@ -596,11 +604,15 @@ class LBNLayer(tf.keras.layers.Layer):
         # store names of features to build
         self._features = kwargs.pop("features", None)
 
+        # store external features to concatenate with the lbn outputs
+        self._external_features = kwargs.pop("external_features", None)
+
         # create the LBN instance with the remaining arguments
         self.lbn = LBN(*args, **kwargs)
 
         # build the lbn as soon as possible as keras calls Layer.build() too late for autograph
-        self.lbn.build(input_shape, features=self._features)
+        self.lbn.build(input_shape, features=self._features,
+            external_features=self._external_features)
 
         # layer init
         super(LBNLayer, self).__init__(name=self.lbn.name, trainable=self.lbn.trainable,
