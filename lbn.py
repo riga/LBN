@@ -541,12 +541,11 @@ class LBN(object):
         self.aux_features = tf.matmul(tf.reshape(self.inputs_aux, [-1, self.n_in * self.n_aux]),
             self.aux_weights, name="aux_features")
 
-    def build_features(self, features=None, external_features=None):
+    def build_features(self, features=None):
         """
         Builds the output features. *features* should be a list of feature names as registered to
         the :py:attr:`feature_factory` instance. When *None*, the default features
-        ``["E", "px", "py", "pz"]`` are built. *external_features* can be a list of tensors of
-        externally produced features, that are concatenated to the built features.
+        ``["E", "px", "py", "pz"]`` are built.
         """
         # default to reshaped 4-vector elements
         if features is None:
@@ -570,13 +569,6 @@ class LBN(object):
         # add auxiliary features
         if self.n_aux > 0:
             concat.append(self.aux_features)
-
-        # add external features
-        if external_features is not None:
-            if isinstance(external_features, (list, tuple)):
-                concat.extend(list(external_features))
-            else:
-                concat.append(external_features)
 
         # save combined features
         self.features = tf.concat(concat, axis=-1)
