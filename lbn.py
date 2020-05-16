@@ -189,6 +189,7 @@ class LBN(object):
         self.boosted_particles = None
 
         # features
+        self.n_features = None  # total number of produced features
         self.boosted_features = None  # features of boosted particles
         self.aux_features = None  # auxiliary features (batch, n_in * n_aux, n_auxiliaries)
         self.features = None  # final, combined output features
@@ -205,51 +206,15 @@ class LBN(object):
         self._op = None
 
     @property
+    def built(self):
+        return self._op is not None
+
+    @property
     def available_features(self):
         """
         Shorthand to access the list of available features in the :py:attr:`feature_factory`.
         """
         return list(self.feature_factory._feature_funcs.keys())
-
-    @property
-    def n_features(self):
-        """
-        Returns the number of created output features which depends on the number of boosted
-        particles and the feature set.
-        """
-        if self.features is None:
-            return None
-
-        return int(self.features.shape[-1])
-
-    def register_feature(self, func=None, **kwargs):
-        """
-        Shorthand to register a new feautre to the current :py:attr:`feature_factory` instance. Can
-        be used as a (configurable) decorator. The decorated function receives the feature factory
-        instance as the only argument. All *kwargs* are forwarded to
-        :py:meth:`FeatureFactoryBase._wrap_feature`. Example:
-
-        .. code-block:: python
-
-            lbn = LBN(10, boost_mode=LBN.PAIRS)
-
-            @lbn.register_feature
-            def px_plus_py(ff):
-                return ff.px() + ff.py()
-
-            print("px_plus_py" in lbn.available_features)  # -> True
-
-            # or register with a different name
-            @lbn.register_feature(name="pxy")
-            def px_plus_py(ff):
-                return ff.px() + ff.py()
-
-            print("pxy" in lbn.available_features)  # -> True
-        """
-        def decorator(func):
-            return self.feature_factory._wrap_feature(func, **kwargs)
-
-        return decorator(func) if func else decorator
 
     def __call__(self, inputs, **kwargs):
         """
@@ -258,17 +223,17 @@ class LBN(object):
         and *kwargs* to :py:meth:`build`.
         """
         # make sure the lbn op is built
-        if self._op is None:
+        if not self.built:
             self.build(inputs.shape, **kwargs)
 
         # invoke it
         return self._op(inputs)
 
-    def build(self, input_shape, **kwargs):
+    def build(self, input_shape, features=("E", "px", "py", "pz"), external_features=None):
         """
         Builds the LBN structure layer by layer within dedicated variable scopes. *input_shape* must
         be a list, tuple or TensorShape object describing the dimensions of the input four-vectors.
-        *kwargs* are forwarded to :py:meth:`build_features`.
+        *features* and *external_features* are forwarded to :py:meth:`build_features`.
         """
         with tf.name_scope(self.name):
             # store shape and size information
@@ -276,17 +241,29 @@ class LBN(object):
 
             # setup variables
             with tf.name_scope("variables"):
-                self.setup_variable("particle", (self.n_in, self.n_particles), 1)
+                self.setup_weight("particle", (self.n_in, self.n_particles), 1)
 
                 if self.boost_mode != self.COMBINATIONS:
-                    self.setup_variable("restframe", (self.n_in, self.n_restframes), 2)
+                    self.setup_weight("restframe", (self.n_in, self.n_restframes), 2)
 
                 if self.n_aux > 0:
-                    self.setup_variable("aux", (self.n_in * self.n_aux, self.n_auxiliaries), 3)
+                    self.setup_weight("aux", (self.n_in, self.n_auxiliaries, self.n_aux), 3)
 
             # constants
             with tf.name_scope("constants"):
                 self.build_constants()
+
+        # compute the number of total features
+        self.n_features = 0
+        # lbn features
+        for feature in features:
+            self.n_features += self.feature_factory._feature_funcs[feature]._shape_func(self.n_out)
+        # auxiliary features
+        if self.n_aux > 0:
+            self.n_features += self.n_out * self.n_aux
+        # external features
+        if external_features is not None:
+            self.n_features += external_features.shape[1]
 
         # also store the op that can be used to either create a graph or an eager callable
         def op(inputs):
@@ -310,7 +287,7 @@ class LBN(object):
                         with tf.name_scope("auxiliary"):
                             self.build_auxiliary()
 
-                    self.build_features(**kwargs)
+                    self.build_features(features=features, external_features=external_features)
 
             return self.features
 
@@ -330,13 +307,13 @@ class LBN(object):
             raise Exception("input dimension must be at least 4")
         self.n_aux = self.n_dim - 4
 
-    def setup_variable(self, prefix, shape, seed_offset=0):
+    def setup_weight(self, prefix, shape, seed_offset=0):
         """
         Sets up the variable tensors representing linear coefficients for the combinations of
         particles and rest frames. *prefix* must either be ``"particle"``, ``"restframe"`` or
-        ``"aux"``. *shape* should be a 2-tuple describing the shape of the weight variable to
-        create. When not *None*, the seed attribute of this instance is incremented by *seed_offset*
-        and passed to the variable constructor.
+        ``"aux"``. *shape* describes the shape of the weight variable to create. When not *None*,
+        the seed attribute of this instance is incremented by *seed_offset* and passed to the
+        variable constructor.
         """
         if prefix not in ["particle", "restframe", "aux"]:
             raise ValueError("unknown prefix '{}'".format(prefix))
@@ -537,21 +514,19 @@ class LBN(object):
         if self.n_aux <= 0:
             raise Exception("cannot build auxiliary features when n_aux is not positive")
 
-        # build the features via a simple matmul
-        self.aux_features = tf.matmul(tf.reshape(self.inputs_aux, [-1, self.n_in * self.n_aux]),
-            self.aux_weights, name="aux_features")
+        # build the features via a simple matmul, mapped over the last axis
+        self.aux_features = tf.concat([
+            tf.matmul(self.inputs_aux[..., i], self.aux_weights[..., i])
+            for i in range(self.n_aux)
+        ], axis=1)
 
-    def build_features(self, features=None, external_features=None):
+    def build_features(self, features=("E", "px", "py", "pz"), external_features=None):
         """
         Builds the output features. *features* should be a list of feature names as registered to
         the :py:attr:`feature_factory` instance. When *None*, the default features
         ``["E", "px", "py", "pz"]`` are built. *external_features* can be a list of tensors of
         externally produced features, that are concatenated with the built features.
         """
-        # default to reshaped 4-vector elements
-        if features is None:
-            features = ["E", "px", "py", "pz"]
-
         # clear the tensor cache when in eager mode
         if callable(getattr(self.inputs, "numpy", None)):
             self.feature_factory.clear_cache()
@@ -580,6 +555,290 @@ class LBN(object):
 
         # save combined features
         self.features = tf.concat(concat, axis=-1)
+
+
+def wrap_feature(shape_func, hidden=False):
+    def decorator(func):
+        name = func.__name__
+
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            if kwargs.pop("no_cache", False):
+                return func(*args, **kwargs)
+            else:
+                if name not in self._tensor_cache:
+                    self._tensor_cache[name] = tf.identity(func(self, *args, **kwargs), name=name)
+                return self._tensor_cache[name]
+
+        # store attributes on the feature wrapper for later use
+        wrapper._feature = True
+        wrapper._func = func
+        wrapper._shape_func = shape_func
+        wrapper._hidden = hidden
+
+        return wrapper
+
+    return decorator
+
+
+def wrap_hidden_feature(func):
+    return wrap_feature(None, hidden=True)(func)
+
+
+def wrap_single_feature(func):
+    shape_func = lambda n_out: n_out
+    return wrap_feature(shape_func)(func)
+
+
+def wrap_pair_feature(func):
+    shape_func = lambda n_out: (n_out**2 - n_out) / 2
+    return wrap_feature(shape_func)(func)
+
+
+class FeatureFactoryBase(object):
+    """
+    Base class of the feature factory. It does not implement actual features but rather the
+    feature wrapping and tensor caching functionality. So-called hidden features are also subject to
+    caching but are not supposed to be accessed by the LBN. They rather provide intermediate results
+    that are used in multiple places and retained for performance purposes.
+    """
+
+    # decorators
+    feature = staticmethod(wrap_feature)
+    hidden_feature = staticmethod(wrap_hidden_feature)
+    single_feature = staticmethod(wrap_single_feature)
+    pair_feature = staticmethod(wrap_pair_feature)
+
+    def __init__(self, lbn):
+        super(FeatureFactoryBase, self).__init__()
+
+        # reference to the lbn instance
+        self.lbn = lbn
+
+        # some shorthands
+        self.n = lbn.n_out
+        self.epsilon = lbn.epsilon
+
+        # cached tensors stored by name
+        # contains also hidden features
+        self._tensor_cache = {}
+
+        # dict of registered feature functions without hidden ones
+        self._feature_funcs = {}
+        for attr in dir(self):
+            func = getattr(self, attr)
+            if getattr(func, "_feature", False) and not func._hidden:
+                self._feature_funcs[attr] = func
+
+    def clear_cache(self):
+        """
+        Clears the current tensor cache.
+        """
+        self._tensor_cache.clear()
+
+
+class FeatureFactory(FeatureFactoryBase):
+    """
+    Default feature factory implementing various generic feature mappings.
+    """
+
+    def __init__(self, lbn):
+        super(FeatureFactory, self).__init__(lbn)
+
+        # pairwise features are computed by multiplying row and column vectors to obtain a
+        # matrix from which we want to extract the values of the upper triangle w/o diagonal,
+        # so store these upper triangle indices for later use in tf.gather
+        self.triu_indices = triu_range(self.n)
+
+    @FeatureFactoryBase.single_feature
+    def E(self):
+        """
+        Energy.
+        """
+        return self.lbn.boosted_particles[..., 0]
+
+    @FeatureFactoryBase.single_feature
+    def px(self):
+        """
+        Momentum component x.
+        """
+        return self.lbn.boosted_particles[..., 1]
+
+    @FeatureFactoryBase.single_feature
+    def py(self):
+        """
+        Momentum component y.
+        """
+        return self.lbn.boosted_particles[..., 2]
+
+    @FeatureFactoryBase.single_feature
+    def pz(self):
+        """
+        Momentum component z.
+        """
+        return self.lbn.boosted_particles[..., 3]
+
+    @FeatureFactoryBase.hidden_feature
+    def _pvec(self):
+        """
+        Momentum vector. Hidden.
+        """
+        return self.lbn.boosted_particles[..., 1:]
+
+    @FeatureFactoryBase.hidden_feature
+    def _p2(self):
+        """
+        Squared absolute momentum. Hidden.
+        """
+        return tf.maximum(tf.reduce_sum(self._pvec()**2, axis=-1), self.epsilon)
+
+    @FeatureFactoryBase.single_feature
+    def p(self):
+        """
+        Absolute momentum.
+        """
+        return self._p2()**0.5
+
+    @FeatureFactoryBase.single_feature
+    def pt(self):
+        """
+        Scalar, transverse momentum.
+        """
+        return tf.maximum(self._p2() - self.pz()**2, self.epsilon)**0.5
+
+    @FeatureFactoryBase.single_feature
+    def eta(self):
+        """
+        Pseudorapidity.
+        """
+        return tf.atanh(tf.clip_by_value(self.pz() / self.p(), self.epsilon - 1, 1 - self.epsilon))
+
+    @FeatureFactoryBase.single_feature
+    def phi(self):
+        """
+        Azimuth.
+        """
+        return tf.atan2(tf_non_zero(self.py(), self.epsilon), self.px())
+
+    @FeatureFactoryBase.single_feature
+    def m(self):
+        """
+        Mass.
+        """
+        return tf.maximum(self.E()**2 - self._p2(), self.epsilon)**0.5
+
+    @FeatureFactoryBase.single_feature
+    def beta(self):
+        """
+        Relativistic speed, v/c or p/E.
+        """
+        return self.p() / tf.maximum(self.E(), self.epsilon)
+
+    @FeatureFactoryBase.single_feature
+    def gamma(self):
+        """
+        Relativistic gamma factor, 1 / sqrt(1-beta**2) or E / m.
+        """
+        return self.E() / tf.maximum(self.m(), self.epsilon)
+
+    @FeatureFactoryBase.pair_feature
+    def pair_dr(self):
+        """
+        Distance between all pairs of particles in the eta-phi plane.
+        """
+        # eta difference on lower triangle elements
+        d_eta = tf.reshape(self.eta(), (-1, self.n, 1)) - tf.reshape(self.eta(), (-1, 1, self.n))
+        d_eta = tf.gather(tf.reshape(d_eta, (-1, self.n**2)), self.triu_indices, axis=1)
+
+        # phi difference on lower triangle elements, handle boundaries
+        d_phi = tf.reshape(self.phi(), (-1, self.n, 1)) - tf.reshape(self.phi(), (-1, 1, self.n))
+        d_phi = tf.gather(tf.reshape(d_phi, (-1, self.n**2)), self.triu_indices, axis=1)
+        d_phi = tf.abs(d_phi)
+        d_phi = tf.minimum(d_phi, 2. * np.math.pi - d_phi)
+
+        return (d_eta**2 + d_phi**2)**0.5
+
+    @FeatureFactoryBase.hidden_feature
+    def _pvec_norm(self):
+        """
+        Normalized momentum vector. Hidden.
+        """
+        return self._pvec() / tf.expand_dims(self.p(), axis=-1)
+
+    @FeatureFactoryBase.hidden_feature
+    def _pvec_norm_T(self):
+        """
+        Normalized, transposed momentum vector. Hidden.
+        """
+        return tf.transpose(self._pvec_norm(), perm=[0, 2, 1])
+
+    @FeatureFactoryBase.pair_feature
+    def pair_cos(self):
+        """
+        Cosine of the angle between all pairs of particles.
+        """
+        # cos = (p1 x p2) / (|p1| x |p2|) = (p1 / |p1|) x (p2 / |p2|)
+        all_pair_cos = tf.matmul(self._pvec_norm(), self._pvec_norm_T())
+
+        # return only upper triangle without diagonal
+        return tf.gather(tf.reshape(all_pair_cos, [-1, self.n**2]), self.triu_indices, axis=1)
+
+    @FeatureFactoryBase.pair_feature
+    def pair_ds(self):
+        """
+        Sign-conserving Minkowski space distance between all pairs of particles.
+        """
+        # (dE**2 - dpx**2 - dpy**2 - dpz**2)**0.5
+        # first, determine all 4-vector differences
+        pvm = tf.expand_dims(self.lbn.boosted_particles, axis=-2)
+        pvm_T = tf.transpose(pvm, perm=[0, 2, 1, 3])
+        all_diffs = pvm - pvm_T
+
+        # extract elements of the upper triangle w/o diagonal and calculate their norm
+        diffs = tf.gather(tf.reshape(all_diffs, [-1, self.n**2, 4]), self.triu_indices, axis=1)
+        diffs_E = diffs[..., 0]
+        diffs_p2 = tf.reduce_sum(diffs[..., 1:]**2, axis=-1)
+
+        ds = diffs_E**2 - diffs_p2
+        return tf.sign(ds) * tf.abs(ds)**0.5
+
+    @FeatureFactoryBase.pair_feature
+    def pair_dy(self):
+        """
+        Rapidity difference between all pairs of particles.
+        """
+        # dy = y1 - y2 = atanh(beta1) - atanh(beta2)
+        beta = tf.clip_by_value(self.beta(), self.epsilon, 1 - self.epsilon)
+        dy = tf.atanh(tf.expand_dims(beta, axis=-1)) - tf.atanh(tf.expand_dims(beta, axis=-2))
+
+        # return only upper triangle without diagonal
+        return tf.gather(tf.reshape(dy, [-1, self.n**2]), self.triu_indices, axis=1)
+
+
+def tf_non_zero(t, epsilon):
+    """
+    Ensures that all zeros in a tensor *t* are replaced by *epsilon*.
+    """
+    # use combination of abs and sign instead of a where op
+    return t + (1 - tf.abs(tf.sign(t))) * epsilon
+
+
+def tril_range(n, k=-1):
+    """
+    Returns a 1D numpy array containing all lower triangle indices of a square matrix with size *n*.
+    *k* is the offset from the diagonal.
+    """
+    tril_indices = np.tril_indices(n, k)
+    return np.arange(n**2).reshape(n, n)[tril_indices]
+
+
+def triu_range(n, k=1):
+    """
+    Returns a 1D numpy array containing all upper triangle indices of a square matrix with size *n*.
+    *k* is the offset from the diagonal.
+    """
+    triu_indices = np.triu_indices(n, k)
+    return np.arange(n**2).reshape(n, n)[triu_indices]
 
 
 class LBNLayer(tf.keras.layers.Layer):
@@ -649,278 +908,3 @@ class LBNLayer(tf.keras.layers.Layer):
             "features": self._features,
         })
         return config
-
-
-class FeatureFactoryBase(object):
-    """
-    Base class of the feature factory. It does not implement actual features but rather the
-    feature wrapping and tensor caching functionality. So-called hidden features are also subject to
-    caching but are not supposed to be accessed by the LBN. They rather provide intermediate results
-    that are used in multiple places and retained for performance purposes.
-    """
-
-    excluded_attributes = ["_wrap_feature", "_wrap_features", "clear_cache", "lbn"]
-
-    def __init__(self, lbn):
-        super(FeatureFactoryBase, self).__init__()
-
-        # cached tensors stored by name
-        # contains also hidden features
-        self._tensor_cache = {}
-
-        # dict of registered, bound feature functions
-        # does not contain hidden features
-        self._feature_funcs = {}
-
-        # wrap all features defined in this class
-        self._wrap_features()
-
-        # reference to the lbn instance
-        self.lbn = lbn
-
-        # some shorthands
-        self.n = lbn.n_out
-        self.epsilon = lbn.epsilon
-
-    def _wrap_feature(self, func, name=None, hidden=None):
-        """
-        Wraps and registers a feature function. It ensures that the stored function is bound to this
-        instance. *name* defaults to the actual function name. When *hidden* is *None*, the decision
-        is inferred from whether *name* starts with an underscore.
-        """
-        if not name:
-            name = func.__name__
-        if hidden is None:
-            hidden = name.startswith("_")
-
-        # bind it to self if not bound yet
-        if getattr(func, "__self__", None) is None:
-            func = func.__get__(self)
-
-        @functools.wraps(func)
-        def wrapper(ff, *args, **kwargs):
-            if kwargs.pop("no_cache", False):
-                return func(*args, **kwargs)
-            else:
-                if name not in self._tensor_cache:
-                    self._tensor_cache[name] = tf.identity(func(*args, **kwargs), name=name)
-                return self._tensor_cache[name]
-
-        # register the bound, caching-aware wrapper to this instance
-        setattr(self, name, wrapper.__get__(self))
-
-        # store in known feature funcs if not hidden
-        if not hidden:
-            self._feature_funcs[name] = wrapper
-
-        return wrapper
-
-    def _wrap_features(self):
-        """
-        Interprets all non-excluded instance methods as feature functions and replaces them by
-        caching-aware wrappers using :py:meth:`_wrap_feature`.
-        """
-        # loop through attributes
-        for name in dir(self):
-            # magic method or excluded?
-            if name.startswith("__") or name in self.excluded_attributes:
-                continue
-
-            # not callable?
-            func = getattr(self, name)
-            if not callable(func):
-                continue
-
-            # wrap it
-            self._wrap_feature(func, name)
-
-    def clear_cache(self):
-        """
-        Clears the current tensor cache.
-        """
-        self._tensor_cache.clear()
-
-
-class FeatureFactory(FeatureFactoryBase):
-    """
-    Default feature factory implementing various generic feature mappings.
-    """
-
-    def __init__(self, lbn):
-        super(FeatureFactory, self).__init__(lbn)
-
-        # pairwise features are computed by multiplying row and column vectors to obtain a
-        # matrix from which we want to extract the values of the upper triangle w/o diagonal,
-        # so store these upper triangle indices for later use in tf.gather
-        self.triu_indices = triu_range(self.n)
-
-    def E(self):
-        """
-        Energy.
-        """
-        return self.lbn.boosted_particles[..., 0]
-
-    def px(self):
-        """
-        Momentum component x.
-        """
-        return self.lbn.boosted_particles[..., 1]
-
-    def py(self):
-        """
-        Momentum component y.
-        """
-        return self.lbn.boosted_particles[..., 2]
-
-    def pz(self):
-        """
-        Momentum component z.
-        """
-        return self.lbn.boosted_particles[..., 3]
-
-    def _pvec(self):
-        """
-        Momentum vector. Hidden.
-        """
-        return self.lbn.boosted_particles[..., 1:]
-
-    def _p2(self):
-        """
-        Squared absolute momentum. Hidden.
-        """
-        return tf.maximum(tf.reduce_sum(self._pvec()**2, axis=-1), self.epsilon)
-
-    def p(self):
-        """
-        Absolute momentum.
-        """
-        return self._p2()**0.5
-
-    def pt(self):
-        """
-        Scalar, transverse momentum.
-        """
-        return tf.maximum(self._p2() - self.pz()**2, self.epsilon)**0.5
-
-    def eta(self):
-        """
-        Pseudorapidity.
-        """
-        return tf.atanh(tf.clip_by_value(self.pz() / self.p(), self.epsilon - 1, 1 - self.epsilon))
-
-    def phi(self):
-        """
-        Azimuth.
-        """
-        return tf.atan2(tf_non_zero(self.py(), self.epsilon), self.px())
-
-    def m(self):
-        """
-        Mass.
-        """
-        return tf.maximum(self.E()**2 - self._p2(), self.epsilon)**0.5
-
-    def beta(self):
-        """
-        Relativistic speed, v/c or p/E.
-        """
-        return self.p() / tf.maximum(self.E(), self.epsilon)
-
-    def gamma(self):
-        """
-        Relativistic gamma factor, 1 / sqrt(1-beta**2) or E / m.
-        """
-        return self.E() / tf.maximum(self.m(), self.epsilon)
-
-    def pair_dr(self):
-        """
-        Distance between all pairs of particles in the eta-phi plane.
-        """
-        # eta difference on lower triangle elements
-        d_eta = tf.reshape(self.eta(), (-1, self.n, 1)) - tf.reshape(self.eta(), (-1, 1, self.n))
-        d_eta = tf.gather(tf.reshape(d_eta, (-1, self.n**2)), self.triu_indices, axis=1)
-
-        # phi difference on lower triangle elements, handle boundaries
-        d_phi = tf.reshape(self.phi(), (-1, self.n, 1)) - tf.reshape(self.phi(), (-1, 1, self.n))
-        d_phi = tf.gather(tf.reshape(d_phi, (-1, self.n**2)), self.triu_indices, axis=1)
-        d_phi = tf.abs(d_phi)
-        d_phi = tf.minimum(d_phi, 2. * np.math.pi - d_phi)
-
-        return (d_eta**2 + d_phi**2)**0.5
-
-    def _pvec_norm(self):
-        """
-        Normalized momentum vector. Hidden.
-        """
-        return self._pvec() / tf.expand_dims(self.p(), axis=-1)
-
-    def _pvec_norm_T(self):
-        """
-        Normalized, transposed momentum vector. Hidden.
-        """
-        return tf.transpose(self._pvec_norm(), perm=[0, 2, 1])
-
-    def pair_cos(self):
-        """
-        Cosine of the angle between all pairs of particles.
-        """
-        # cos = (p1 x p2) / (|p1| x |p2|) = (p1 / |p1|) x (p2 / |p2|)
-        all_pair_cos = tf.matmul(self._pvec_norm(), self._pvec_norm_T())
-
-        # return only upper triangle without diagonal
-        return tf.gather(tf.reshape(all_pair_cos, [-1, self.n**2]), self.triu_indices, axis=1)
-
-    def pair_ds(self):
-        """
-        Sign-conserving Minkowski space distance between all pairs of particles.
-        """
-        # (dE**2 - dpx**2 - dpy**2 - dpz**2)**0.5
-        # first, determine all 4-vector differences
-        pvm = tf.expand_dims(self.lbn.boosted_particles, axis=-2)
-        pvm_T = tf.transpose(pvm, perm=[0, 2, 1, 3])
-        all_diffs = pvm - pvm_T
-
-        # extract elements of the upper triangle w/o diagonal and calculate their norm
-        diffs = tf.gather(tf.reshape(all_diffs, [-1, self.n**2, 4]), self.triu_indices, axis=1)
-        diffs_E = diffs[..., 0]
-        diffs_p2 = tf.reduce_sum(diffs[..., 1:]**2, axis=-1)
-
-        ds = diffs_E**2 - diffs_p2
-        return tf.sign(ds) * tf.abs(ds)**0.5
-
-    def pair_dy(self):
-        """
-        Rapidity difference between all pairs of particles.
-        """
-        # dy = y1 - y2 = atanh(beta1) - atanh(beta2)
-        beta = tf.clip_by_value(self.beta(), self.epsilon, 1 - self.epsilon)
-        dy = tf.atanh(tf.expand_dims(beta, axis=-1)) - tf.atanh(tf.expand_dims(beta, axis=-2))
-
-        # return only upper triangle without diagonal
-        return tf.gather(tf.reshape(dy, [-1, self.n**2]), self.triu_indices, axis=1)
-
-
-def tf_non_zero(t, epsilon):
-    """
-    Ensures that all zeros in a tensor *t* are replaced by *epsilon*.
-    """
-    # use combination of abs and sign instead of a where op
-    return t + (1 - tf.abs(tf.sign(t))) * epsilon
-
-
-def tril_range(n, k=-1):
-    """
-    Returns a 1D numpy array containing all lower triangle indices of a square matrix with size *n*.
-    *k* is the offset from the diagonal.
-    """
-    tril_indices = np.tril_indices(n, k)
-    return np.arange(n**2).reshape(n, n)[tril_indices]
-
-
-def triu_range(n, k=1):
-    """
-    Returns a 1D numpy array containing all upper triangle indices of a square matrix with size *n*.
-    *k* is the offset from the diagonal.
-    """
-    triu_indices = np.triu_indices(n, k)
-    return np.arange(n**2).reshape(n, n)[triu_indices]

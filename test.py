@@ -64,7 +64,7 @@ class TestCase(unittest.TestCase):
 
         ], shape=[10, 10], dtype=tf.float32)
         self.custom_aux_weights = tf.constant(self.n_aux * 100 * [1],
-            shape=[self.n_aux * 10, 10], dtype=tf.float32)
+            shape=[10, 10, self.n_aux], dtype=tf.float32)
 
     def test_vectors_seed(self):
         self.assertAlmostEqual(np.sum(self.vectors), 1646.26998736)
@@ -149,7 +149,7 @@ class TestCase(unittest.TestCase):
 
         self.assertEqual(lbn.particle_weights.numpy().shape, (10, 10))
         self.assertEqual(lbn.restframe_weights.numpy().shape, (10, 10))
-        self.assertEqual(lbn.aux_weights.numpy().shape, (20, 10))
+        self.assertEqual(lbn.aux_weights.numpy().shape, (10, 10, 2))
 
         self.assertEqual(np.sum(lbn.particle_weights.numpy()), 3)
         self.assertEqual(np.sum(lbn.restframe_weights.numpy()), 3)
@@ -236,6 +236,7 @@ class TestCase(unittest.TestCase):
     def test_custom_feature_factory(self):
         class MyFeatureFactory(FeatureFactory):
 
+            @FeatureFactory.single_feature
             def px_plus_py(self):
                 return self.px() + self.py()
 
@@ -245,16 +246,6 @@ class TestCase(unittest.TestCase):
         with self.assertRaises(TypeError):
             LBN(10, boost_mode=LBN.PAIRS, feature_factory="foo")
 
-    def test_register_feature(self):
-        lbn = LBN(10, boost_mode=LBN.PAIRS)
-        self.assertNotIn("px_plus_py", lbn.available_features)
-
-        @lbn.register_feature
-        def px_plus_py(factory):
-            return factory.px() + factory.py()
-
-        self.assertIn("px_plus_py", lbn.available_features)
-
     def test_aux_features(self):
         lbn = LBN(10, boost_mode=LBN.PAIRS)
 
@@ -263,10 +254,10 @@ class TestCase(unittest.TestCase):
         self.assertEqual(lbn.n_dim, 6)
         self.assertEqual(lbn.n_aux, 2)
         self.assertEqual(lbn.n_auxiliaries, 10)
-        self.assertEqual(lbn.aux_weights.shape, (20, 10))
+        self.assertEqual(lbn.aux_weights.shape, (10, 10, 2))
 
         self.assertEqual(features.shape[1], lbn.n_features)
-        self.assertEqual(features.shape, (2, 105))
+        self.assertEqual(features.shape, (2, 115))
 
     def test_external_features(self):
         lbn = LBN(10, boost_mode=LBN.PAIRS)
@@ -284,6 +275,7 @@ class TestCase(unittest.TestCase):
                 super(MyFeatureFactory, self).__init__(*args, **kwargs)
                 self.count = 0
 
+            @FeatureFactory.single_feature
             def px_plus_py(self):
                 self.count += 1
                 return self.px() + self.py()
@@ -301,14 +293,9 @@ class TestCase(unittest.TestCase):
         lbn = LBN(10, boost_mode=LBN.PAIRS, particle_weights=self.custom_particle_weights,
             restframe_weights=self.custom_restframe_weights)
 
-        # add a custom feature
-        @lbn.register_feature
-        def px_plus_py(factory):
-            return factory.px() + factory.py()
-
         all_features = [
             "E", "px", "py", "pz", "pt", "p", "m", "phi", "eta", "beta", "gamma", "pair_cos",
-            "pair_dr", "pair_ds", "pair_dy", "px_plus_py",
+            "pair_dr", "pair_ds", "pair_dy",
         ]
         self.assertEqual(set(lbn.available_features), set(all_features))
 
@@ -335,9 +322,6 @@ class TestCase(unittest.TestCase):
         self.assertAlmostEqual(features[155], 2.6730149, 4)
         self.assertAlmostEqual(features[200], -136.8383, 4)
         self.assertAlmostEqual(features[245], -1.3652772, 4)
-
-        # test the custom feature
-        self.assertAlmostEqual(features[290], -36.780174, 4)
 
     def test_keras_layer(self):
         ext = tf.Variable([[1, 2], [3, 4]], dtype=tf.float32)
