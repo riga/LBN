@@ -856,9 +856,14 @@ class LBNLayer(tf.keras.layers.Layer):
     def __init__(self, input_shape, *args, **kwargs):
         # store and remove kwargs that are not passed to the LBN but to the layer init
         layer_kwargs = {
+            "input_shape": input_shape,
             "dtype": kwargs.pop("dtype", None),
             "dynamic": kwargs.pop("dynamic", False),
         }
+        # for whatever reason, keras calls this contructor again
+        # with batch_input_shape set when input_shape was accepted
+        if "batch_input_shape" in kwargs:
+            layer_kwargs["batch_input_shape"] = kwargs.pop("batch_input_shape")
 
         # store names of features to build
         self._features = kwargs.pop("features", None)
@@ -869,15 +874,18 @@ class LBNLayer(tf.keras.layers.Layer):
         # create the LBN instance with the remaining arguments
         self.lbn = LBN(*args, **kwargs)
 
-        # build the lbn as soon as possible as keras calls Layer.build() too late for autograph
-        self.lbn.build(input_shape, features=self._features,
-            external_features=self._external_features)
+        # the input_shape is mandatory so we can build right away
+        self.build(input_shape)
 
         # layer init
         super(LBNLayer, self).__init__(name=self.lbn.name, trainable=self.lbn.trainable,
             **layer_kwargs)
 
     def build(self, input_shape):
+        # build the lbn
+        self.lbn.build(input_shape, features=self._features,
+            external_features=self._external_features)
+
         # store references to the weights
         self.particle_weights = self.lbn.particle_weights
         self.restframe_weights = self.lbn.restframe_weights
