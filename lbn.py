@@ -20,6 +20,7 @@ import functools
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.framework import ops as tf_ops
 
 
 # tf version flag
@@ -527,9 +528,10 @@ class LBN(object):
         ``["E", "px", "py", "pz"]`` are built. *external_features* can be a list of tensors of
         externally produced features, that are concatenated with the built features.
         """
-        # clear the tensor cache when in eager mode
-        if callable(getattr(self.inputs, "numpy", None)):
-            self.feature_factory.clear_cache()
+        symbolic = _is_symbolic(self.inputs)
+
+        # clear the eager tensor cache
+        self.feature_factory.clear_eager_cache()
 
         # create the list of feature ops to concat
         concat = []
@@ -537,7 +539,7 @@ class LBN(object):
             func = getattr(self.feature_factory, name)
             if func is None:
                 raise ValueError("unknown feature '{}'".format(name))
-            concat.append(func())
+            concat.append(func(_symbolic=symbolic))
 
         # save intermediate boosted features
         self.boosted_features = tf.concat(concat, axis=-1)
@@ -557,42 +559,19 @@ class LBN(object):
         self.features = tf.concat(concat, axis=-1)
 
 
-def wrap_feature(shape_func, hidden=False):
-    def decorator(func):
-        name = func.__name__
-
-        @functools.wraps(func)
-        def wrapper(self, *args, **kwargs):
-            if kwargs.pop("no_cache", False):
-                return func(*args, **kwargs)
-            else:
-                if name not in self._tensor_cache:
-                    self._tensor_cache[name] = tf.identity(func(self, *args, **kwargs), name=name)
-                return self._tensor_cache[name]
-
-        # store attributes on the feature wrapper for later use
-        wrapper._feature = True
-        wrapper._func = func
-        wrapper._shape_func = shape_func
-        wrapper._hidden = hidden
-
-        return wrapper
-
-    return decorator
-
-
-def wrap_hidden_feature(func):
-    return wrap_feature(None, hidden=True)(func)
-
-
-def wrap_single_feature(func):
-    shape_func = lambda n_out: n_out
-    return wrap_feature(shape_func)(func)
-
-
-def wrap_pair_feature(func):
-    shape_func = lambda n_out: (n_out**2 - n_out) / 2
-    return wrap_feature(shape_func)(func)
+def _is_symbolic(t):
+    """
+    Returs *True* when a tensor *t* is a symbolic tensor.
+    """
+    if getattr(tf_ops, "EagerTensor", None) is not None and isinstance(t, tf_ops.EagerTensor):
+        return False
+    elif callable(getattr(t, "numpy", None)):
+        return False
+    elif callable(getattr(tf_ops, "_is_keras_symbolic_tensor", None)) and \
+            tf_ops._is_keras_symbolic_tensor(t):
+        return True
+    else:
+        return True
 
 
 class FeatureFactoryBase(object):
@@ -603,11 +582,48 @@ class FeatureFactoryBase(object):
     that are used in multiple places and retained for performance purposes.
     """
 
-    # decorators
-    feature = staticmethod(wrap_feature)
-    hidden_feature = staticmethod(wrap_hidden_feature)
-    single_feature = staticmethod(wrap_single_feature)
-    pair_feature = staticmethod(wrap_pair_feature)
+    @classmethod
+    def feature(cls, shape_func, hidden=False):
+        def decorator(func):
+            name = func.__name__
+
+            @functools.wraps(func)
+            def wrapper(self, *args, **kwargs):
+                no_cache = kwargs.get("_no_cache", False)
+                symbolic = kwargs.get("_symbolic", True)
+
+                # get the result of the wrapped feature, with or without caching
+                if no_cache:
+                    return func(self, *args, **kwargs)
+                else:
+                    cache = self._symbolic_tensor_cache if symbolic else self._eager_tensor_cache
+                    if name not in cache:
+                        cache[name] = tf.identity(func(self, *args, **kwargs), name=name)
+                    return cache[name]
+
+            # store attributes on the feature wrapper for later use
+            wrapper._feature = True
+            wrapper._func = func
+            wrapper._shape_func = shape_func
+            wrapper._hidden = hidden
+
+            return wrapper
+
+        return decorator
+
+    @classmethod
+    def hidden_feature(cls, func):
+        return cls.feature(None, hidden=True)(func)
+
+    @classmethod
+    def single_feature(cls, func):
+        shape_func = lambda n_out: n_out
+        return cls.feature(shape_func)(func)
+
+    @classmethod
+    def pair_feature(cls, func):
+        shape_func = lambda n_out: (n_out**2 - n_out) / 2
+        return cls.feature(shape_func)(func)
 
     def __init__(self, lbn):
         super(FeatureFactoryBase, self).__init__()
@@ -619,9 +635,11 @@ class FeatureFactoryBase(object):
         self.n = lbn.n_out
         self.epsilon = lbn.epsilon
 
-        # cached tensors stored by name
-        # contains also hidden features
-        self._tensor_cache = {}
+        # cached symbolic tensors stored by name
+        self._symbolic_tensor_cache = {}
+
+        # cached eager tensors stored by name
+        self._eager_tensor_cache = {}
 
         # dict of registered feature functions without hidden ones
         self._feature_funcs = {}
@@ -630,11 +648,17 @@ class FeatureFactoryBase(object):
             if getattr(func, "_feature", False) and not func._hidden:
                 self._feature_funcs[attr] = func
 
-    def clear_cache(self):
+    def clear_symbolic_cache(self):
         """
-        Clears the current tensor cache.
+        Clears the current eager tensor cache.
         """
-        self._tensor_cache.clear()
+        self._symbolic_tensor_cache.clear()
+
+    def clear_eager_cache(self):
+        """
+        Clears the current eager tensor cache.
+        """
+        self._eager_tensor_cache.clear()
 
 
 class FeatureFactory(FeatureFactoryBase):
@@ -651,107 +675,110 @@ class FeatureFactory(FeatureFactoryBase):
         self.triu_indices = triu_range(self.n)
 
     @FeatureFactoryBase.single_feature
-    def E(self):
+    def E(self, **opts):
         """
         Energy.
         """
         return self.lbn.boosted_particles[..., 0]
 
     @FeatureFactoryBase.single_feature
-    def px(self):
+    def px(self, **opts):
         """
         Momentum component x.
         """
         return self.lbn.boosted_particles[..., 1]
 
     @FeatureFactoryBase.single_feature
-    def py(self):
+    def py(self, **opts):
         """
         Momentum component y.
         """
         return self.lbn.boosted_particles[..., 2]
 
     @FeatureFactoryBase.single_feature
-    def pz(self):
+    def pz(self, **opts):
         """
         Momentum component z.
         """
         return self.lbn.boosted_particles[..., 3]
 
     @FeatureFactoryBase.hidden_feature
-    def _pvec(self):
+    def _pvec(self, **opts):
         """
         Momentum vector. Hidden.
         """
         return self.lbn.boosted_particles[..., 1:]
 
     @FeatureFactoryBase.hidden_feature
-    def _p2(self):
+    def _p2(self, **opts):
         """
         Squared absolute momentum. Hidden.
         """
-        return tf.maximum(tf.reduce_sum(self._pvec()**2, axis=-1), self.epsilon)
+        return tf.maximum(tf.reduce_sum(self._pvec(**opts)**2, axis=-1), self.epsilon)
 
     @FeatureFactoryBase.single_feature
-    def p(self):
+    def p(self, **opts):
         """
         Absolute momentum.
         """
-        return self._p2()**0.5
+        return self._p2(**opts)**0.5
 
     @FeatureFactoryBase.single_feature
-    def pt(self):
+    def pt(self, **opts):
         """
         Scalar, transverse momentum.
         """
-        return tf.maximum(self._p2() - self.pz()**2, self.epsilon)**0.5
+        return tf.maximum(self._p2(**opts) - self.pz(**opts)**2, self.epsilon)**0.5
 
     @FeatureFactoryBase.single_feature
-    def eta(self):
+    def eta(self, **opts):
         """
         Pseudorapidity.
         """
-        return tf.atanh(tf.clip_by_value(self.pz() / self.p(), self.epsilon - 1, 1 - self.epsilon))
+        return tf.atanh(tf.clip_by_value(self.pz(**opts) / self.p(**opts),
+            self.epsilon - 1, 1 - self.epsilon))
 
     @FeatureFactoryBase.single_feature
-    def phi(self):
+    def phi(self, **opts):
         """
         Azimuth.
         """
-        return tf.atan2(tf_non_zero(self.py(), self.epsilon), self.px())
+        return tf.atan2(tf_non_zero(self.py(**opts), self.epsilon), self.px(**opts))
 
     @FeatureFactoryBase.single_feature
-    def m(self):
+    def m(self, **opts):
         """
         Mass.
         """
-        return tf.maximum(self.E()**2 - self._p2(), self.epsilon)**0.5
+        return tf.maximum(self.E(**opts)**2 - self._p2(**opts), self.epsilon)**0.5
 
     @FeatureFactoryBase.single_feature
-    def beta(self):
+    def beta(self, **opts):
         """
         Relativistic speed, v/c or p/E.
         """
-        return self.p() / tf.maximum(self.E(), self.epsilon)
+        return self.p(**opts) / tf.maximum(self.E(**opts), self.epsilon)
 
     @FeatureFactoryBase.single_feature
-    def gamma(self):
+    def gamma(self, **opts):
         """
         Relativistic gamma factor, 1 / sqrt(1-beta**2) or E / m.
         """
-        return self.E() / tf.maximum(self.m(), self.epsilon)
+        return self.E(**opts) / tf.maximum(self.m(**opts), self.epsilon)
 
     @FeatureFactoryBase.pair_feature
-    def pair_dr(self):
+    def pair_dr(self, **opts):
         """
         Distance between all pairs of particles in the eta-phi plane.
         """
         # eta difference on lower triangle elements
-        d_eta = tf.reshape(self.eta(), (-1, self.n, 1)) - tf.reshape(self.eta(), (-1, 1, self.n))
+        d_eta = tf.reshape(self.eta(**opts), (-1, self.n, 1)) - \
+            tf.reshape(self.eta(**opts), (-1, 1, self.n))
         d_eta = tf.gather(tf.reshape(d_eta, (-1, self.n**2)), self.triu_indices, axis=1)
 
         # phi difference on lower triangle elements, handle boundaries
-        d_phi = tf.reshape(self.phi(), (-1, self.n, 1)) - tf.reshape(self.phi(), (-1, 1, self.n))
+        d_phi = tf.reshape(self.phi(**opts), (-1, self.n, 1)) - \
+            tf.reshape(self.phi(**opts), (-1, 1, self.n))
         d_phi = tf.gather(tf.reshape(d_phi, (-1, self.n**2)), self.triu_indices, axis=1)
         d_phi = tf.abs(d_phi)
         d_phi = tf.minimum(d_phi, 2. * np.math.pi - d_phi)
@@ -759,32 +786,32 @@ class FeatureFactory(FeatureFactoryBase):
         return (d_eta**2 + d_phi**2)**0.5
 
     @FeatureFactoryBase.hidden_feature
-    def _pvec_norm(self):
+    def _pvec_norm(self, **opts):
         """
         Normalized momentum vector. Hidden.
         """
-        return self._pvec() / tf.expand_dims(self.p(), axis=-1)
+        return self._pvec(**opts) / tf.expand_dims(self.p(**opts), axis=-1)
 
     @FeatureFactoryBase.hidden_feature
-    def _pvec_norm_T(self):
+    def _pvec_norm_T(self, **opts):
         """
         Normalized, transposed momentum vector. Hidden.
         """
-        return tf.transpose(self._pvec_norm(), perm=[0, 2, 1])
+        return tf.transpose(self._pvec_norm(**opts), perm=[0, 2, 1])
 
     @FeatureFactoryBase.pair_feature
-    def pair_cos(self):
+    def pair_cos(self, **opts):
         """
         Cosine of the angle between all pairs of particles.
         """
         # cos = (p1 x p2) / (|p1| x |p2|) = (p1 / |p1|) x (p2 / |p2|)
-        all_pair_cos = tf.matmul(self._pvec_norm(), self._pvec_norm_T())
+        all_pair_cos = tf.matmul(self._pvec_norm(**opts), self._pvec_norm_T(**opts))
 
         # return only upper triangle without diagonal
         return tf.gather(tf.reshape(all_pair_cos, [-1, self.n**2]), self.triu_indices, axis=1)
 
     @FeatureFactoryBase.pair_feature
-    def pair_ds(self):
+    def pair_ds(self, **opts):
         """
         Sign-conserving Minkowski space distance between all pairs of particles.
         """
@@ -803,12 +830,12 @@ class FeatureFactory(FeatureFactoryBase):
         return tf.sign(ds) * tf.abs(ds)**0.5
 
     @FeatureFactoryBase.pair_feature
-    def pair_dy(self):
+    def pair_dy(self, **opts):
         """
         Rapidity difference between all pairs of particles.
         """
         # dy = y1 - y2 = atanh(beta1) - atanh(beta2)
-        beta = tf.clip_by_value(self.beta(), self.epsilon, 1 - self.epsilon)
+        beta = tf.clip_by_value(self.beta(**opts), self.epsilon, 1 - self.epsilon)
         dy = tf.atanh(tf.expand_dims(beta, axis=-1)) - tf.atanh(tf.expand_dims(beta, axis=-2))
 
         # return only upper triangle without diagonal

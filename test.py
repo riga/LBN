@@ -237,8 +237,8 @@ class TestCase(unittest.TestCase):
         class MyFeatureFactory(FeatureFactory):
 
             @FeatureFactory.single_feature
-            def px_plus_py(self):
-                return self.px() + self.py()
+            def px_plus_py(self, **opts):
+                return self.px(**opts) + self.py(**opts)
 
         lbn = LBN(10, boost_mode=LBN.PAIRS, feature_factory=MyFeatureFactory)
         self.assertIn("px_plus_py", lbn.available_features)
@@ -275,19 +275,34 @@ class TestCase(unittest.TestCase):
                 super(MyFeatureFactory, self).__init__(*args, **kwargs)
                 self.count = 0
 
-            @FeatureFactory.single_feature
-            def px_plus_py(self):
+            @FeatureFactory.hidden_feature
+            def _px_plus_py(self, **opts):
                 self.count += 1
-                return self.px() + self.py()
+                return self.px(**opts) + self.py(**opts)
+
+            @FeatureFactory.single_feature
+            def px_plus_py(self, **opts):
+                return self._px_plus_py(**opts)
+
+            @FeatureFactory.single_feature
+            def px_plus_py_2(self, **opts):
+                return self._px_plus_py(**opts)**2.
 
         lbn = LBN(10, boost_mode=LBN.PAIRS, feature_factory=MyFeatureFactory)
         self.assertEqual(lbn.feature_factory.count, 0)
 
-        lbn(self.vectors_t, features=self.feature_set + ["px_plus_py"]).numpy()
+        lbn(self.vectors_t, features=self.feature_set + ["px_plus_py", "px_plus_py_2"]).numpy()
         self.assertEqual(lbn.feature_factory.count, 1)
 
-        lbn.feature_factory.px_plus_py()
-        self.assertEqual(lbn.feature_factory.count, 1)
+        lbn(self.vectors_t, features=self.feature_set + ["px_plus_py", "px_plus_py_2"]).numpy()
+        self.assertEqual(lbn.feature_factory.count, 2)
+
+        lbn.feature_factory.px_plus_py(_symbolic=False)
+        self.assertEqual(lbn.feature_factory.count, 2)
+
+        lbn.feature_factory.clear_eager_cache()
+        lbn.feature_factory.px_plus_py(_symbolic=False)
+        self.assertEqual(lbn.feature_factory.count, 3)
 
     def test_features(self):
         lbn = LBN(10, boost_mode=LBN.PAIRS, particle_weights=self.custom_particle_weights,
