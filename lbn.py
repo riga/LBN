@@ -563,15 +563,18 @@ def _is_symbolic(t):
     """
     Returs *True* when a tensor *t* is a symbolic tensor.
     """
-    if getattr(tf_ops, "EagerTensor", None) is not None and isinstance(t, tf_ops.EagerTensor):
-        return False
-    elif callable(getattr(t, "numpy", None)):
-        return False
+    if len(t.shape) > 0 and t.shape[0] is None:
+        return True
     elif callable(getattr(tf_ops, "_is_keras_symbolic_tensor", None)) and \
             tf_ops._is_keras_symbolic_tensor(t):
         return True
+    elif getattr(tf_ops, "EagerTensor", None) is not None and isinstance(t, tf_ops.EagerTensor):
+        return False
+    elif callable(getattr(t, "numpy", None)):
+        return False
     else:
-        return True
+        # no other check to perform, assume it is eager
+        return False
 
 
 class FeatureFactoryBase(object):
