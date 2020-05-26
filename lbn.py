@@ -775,13 +775,13 @@ class FeatureFactory(FeatureFactoryBase):
         Distance between all pairs of particles in the eta-phi plane.
         """
         # eta difference on lower triangle elements
-        d_eta = tf.reshape(self.eta(**opts), (-1, self.n, 1)) - \
-            tf.reshape(self.eta(**opts), (-1, 1, self.n))
+        d_eta = tf.reshape(self.eta(**opts), (-1, self.n, 1)) - tf.reshape(self.eta(**opts),
+            (-1, 1, self.n))
         d_eta = tf.gather(tf.reshape(d_eta, (-1, self.n**2)), self.triu_indices, axis=1)
 
         # phi difference on lower triangle elements, handle boundaries
-        d_phi = tf.reshape(self.phi(**opts), (-1, self.n, 1)) - \
-            tf.reshape(self.phi(**opts), (-1, 1, self.n))
+        d_phi = tf.reshape(self.phi(**opts), (-1, self.n, 1)) - tf.reshape(self.phi(**opts),
+            (-1, 1, self.n))
         d_phi = tf.gather(tf.reshape(d_phi, (-1, self.n**2)), self.triu_indices, axis=1)
         d_phi = tf.abs(d_phi)
         d_phi = tf.minimum(d_phi, 2. * np.math.pi - d_phi)
