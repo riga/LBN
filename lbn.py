@@ -400,7 +400,7 @@ class LBN(object):
             W = tf.maximum(W, clip, name=name("clipped_{}_weights"))
 
         # assign a name to the final weights
-        W = tf.identity(W, name=name("{}_weights"))
+        W = tf.identity(W, name=name("final_{}_weights"))
 
         # create four-vectors of combinations
         E = tf.matmul(self.inputs_E, W, name=name("{}s_E"))
@@ -455,6 +455,10 @@ class LBN(object):
         # note: there might be more performant operations in future TF releases
         E = tf.reshape(restframes_E, [-1, 1])
         pvec = tf.reshape(restframes_pvec, [-1, 3])
+
+        # for the boost to work, E must always be larger than p
+        p = tf.reduce_sum(pvec**2., axis=1, keepdims=True)**0.5
+        E = tf.maximum(E, p + self.epsilon)
 
         # determine the beta vectors
         betavec = pvec / E
@@ -916,7 +920,8 @@ class LBNLayer(tf.keras.layers.Layer):
         self.lbn.build(input_shape, features=self._features,
             external_features=self._external_features)
 
-        # store references to the weights
+        # store references to the trainable weights
+        # (not necessarily the weights used in combinations)
         self.particle_weights = self.lbn.particle_weights
         self.restframe_weights = self.lbn.restframe_weights
         self.aux_weights = self.lbn.aux_weights
