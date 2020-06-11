@@ -534,8 +534,8 @@ class LBN(object):
         """
         symbolic = _is_symbolic(self.inputs)
 
-        # clear the eager tensor cache
-        self.feature_factory.clear_eager_cache()
+        # clear the feature caches
+        self.feature_factory.clear_caches()
 
         # create the list of feature ops to concat
         concat = []
@@ -589,6 +589,8 @@ class FeatureFactoryBase(object):
     that are used in multiple places and retained for performance purposes.
     """
 
+    DISABLE_CACHE = False
+
     @classmethod
     def feature(cls, shape_func, hidden=False):
         def decorator(func):
@@ -596,12 +598,12 @@ class FeatureFactoryBase(object):
 
             @functools.wraps(func)
             def wrapper(self, *args, **kwargs):
-                no_cache = kwargs.get("_no_cache", False)
-                symbolic = kwargs.get("_symbolic", True)
+                no_cache = kwargs.get("_no_cache", self.DISABLE_CACHE)
+                symbolic = kwargs.get("_symbolic", False)
 
                 # get the result of the wrapped feature, with or without caching
                 if no_cache:
-                    return func(self, *args, **kwargs)
+                    return tf.identity(func(self, *args, **kwargs), name=name)
                 else:
                     cache = self._symbolic_tensor_cache if symbolic else self._eager_tensor_cache
                     if name not in cache:
@@ -666,6 +668,13 @@ class FeatureFactoryBase(object):
         Clears the current eager tensor cache.
         """
         self._eager_tensor_cache.clear()
+
+    def clear_caches(self):
+        """
+        Clears both the current eager and symbolic tensor caches.
+        """
+        self.clear_symbolic_cache()
+        self.clear_eager_cache()
 
 
 class FeatureFactory(FeatureFactoryBase):
