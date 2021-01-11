@@ -11,13 +11,17 @@ stages:
 jobs:
   include:
     - stage: lint
+      services:
+        - docker
       env:
         - JOB=lint
+      env:
+        - JOB=test_py3_lint
+        - IMG=tensorflow/tensorflow
       install:
-        - pip install -r requirements.txt
-        - pip install flake8
+        - docker pull $IMG
       script:
-        - flake8 lbn.py test.py setup.py
+        - docker run -t --rm -v `pwd`:/root/lbn -w /root/lbn $IMG bash -c "pip install flake8; flake8 lbn.py test.py setup.py"
 
     - stage: test
       services:
@@ -57,7 +61,7 @@ jobs:
         - docker
       env:
         - JOB=test_py3_tf2
-        - IMG=tensorflow/tensorflow:2.2.0
+        - IMG=tensorflow/tensorflow:2.4.0
       install:
         - docker pull $IMG
       script:
