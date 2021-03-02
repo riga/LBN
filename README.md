@@ -2,6 +2,8 @@
 
 TensorFlow implementation of the Lorentz Boost Network from [arXiv:1812.09722 [hep-ex]](https://arxiv.org/abs/1812.09722).
 
+![LBN architecture](architecture.png "LBN architecture")
+
 
 ### Usage example
 
