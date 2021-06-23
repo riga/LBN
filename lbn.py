@@ -86,6 +86,9 @@ class LBN(object):
     PRODUCT = "product"
     COMBINATIONS = "combinations"
 
+    # default features
+    DEFAULT_FEATURES = ["E", "px", "py", "pz"]
+
     def __init__(self, n_particles, n_restframes=None, n_auxiliaries=None, boost_mode=PAIRS,
             feature_factory=None, particle_weights=None, abs_particle_weights=True,
             clip_particle_weights=False, restframe_weights=None, abs_restframe_weights=True,
@@ -230,12 +233,15 @@ class LBN(object):
         # invoke it
         return self._op(inputs)
 
-    def build(self, input_shape, features=("E", "px", "py", "pz"), external_features=None):
-        """
+    def build(self, input_shape, features=None, external_features=None):
+        """ build(input_shape, features=DEFAULT_FEATURES, external_features=None)
         Builds the LBN structure layer by layer within dedicated variable scopes. *input_shape* must
         be a list, tuple or TensorShape object describing the dimensions of the input four-vectors.
         *features* and *external_features* are forwarded to :py:meth:`build_features`.
         """
+        if not features:
+            features = self.DEFAULT_FEATURES
+
         with tf.name_scope(self.name):
             # store shape and size information
             self.infer_sizes(input_shape)
@@ -525,13 +531,15 @@ class LBN(object):
             for i in range(self.n_aux)
         ], axis=1)
 
-    def build_features(self, features=("E", "px", "py", "pz"), external_features=None):
-        """
+    def build_features(self, features=None, external_features=None):
+        """ build_features(features=DEFAULT_FEATURES, external_features=None)
         Builds the output features. *features* should be a list of feature names as registered to
-        the :py:attr:`feature_factory` instance. When *None*, the default features
-        ``["E", "px", "py", "pz"]`` are built. *external_features* can be a list of tensors of
-        externally produced features, that are concatenated with the built features.
+        the :py:attr:`feature_factory` instance. *external_features* can be a list of tensors of
+        externally produced features that are concatenated with the built features.
         """
+        if not features:
+           features = self.DEFAULT_FEATURES
+
         symbolic = _is_symbolic(self.inputs)
 
         # clear the feature caches
