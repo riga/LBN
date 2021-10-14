@@ -239,6 +239,11 @@ class LBN(object):
         be a list, tuple or TensorShape object describing the dimensions of the input four-vectors.
         *features* and *external_features* are forwarded to :py:meth:`build_features`.
         """
+        # prevent building more than once
+        if self.built:
+            return self._op
+        
+        # fallback to default features
         if not features:
             features = self.DEFAULT_FEATURES
 
