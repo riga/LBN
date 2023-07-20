@@ -96,6 +96,9 @@ class LBN(object):
             seed=None, trainable=True, name=None):
         super(LBN, self).__init__()
 
+        # custom adjustment: enforce pair-wise boosting
+        assert boost_mode == self.PAIRS
+
         # determine the number of output particles, which depends on the boost mode
         # PAIRS:
         #   n_restframes set to n_particles, boost pairwise, n_out = n_particles
@@ -115,6 +118,10 @@ class LBN(object):
         else:
             raise ValueError("unknown boost_mode '{}'".format(boost_mode))
 
+        # custom adjustment: increment n_out to account for the two predefined restframes with
+        #                    combination boosting
+        self.n_out += 2 * n_particles
+
         # store boost mode and number of particles and restframes to build
         self.boost_mode = boost_mode
         self.n_particles = n_particles
@@ -132,6 +139,10 @@ class LBN(object):
         self.abs_restframe_weights = abs_restframe_weights
         self.clip_restframe_weights = clip_restframe_weights
         self.final_restframe_weights = None
+
+        # custom adjustment: additional settings
+        self.abs_fixed_restframe_weights = False
+        self.clip_fixed_restframe_weights = False
 
         # auxiliary weights
         self.aux_weights = aux_weights
@@ -242,7 +253,7 @@ class LBN(object):
         # prevent building more than once
         if self.built:
             return self._op
-        
+
         # fallback to default features
         if not features:
             features = self.DEFAULT_FEATURES
@@ -257,6 +268,9 @@ class LBN(object):
 
                 if self.boost_mode != self.COMBINATIONS:
                     self.setup_weight("restframe", (self.n_in, self.n_restframes), 2)
+
+                # custom adjustment: add weights for two predefined restframes (e.g. zeros and ones)
+                self.fixed_restframe_weights = tf.constant(self.n_in * [[0, 1]], tf.float32)
 
                 if self.n_aux > 0:
                     self.setup_weight("aux", (self.n_in, self.n_auxiliaries, self.n_aux), 3)
@@ -290,6 +304,9 @@ class LBN(object):
                 if self.boost_mode != self.COMBINATIONS:
                     with tf.name_scope("restframes"):
                         self.build_combinations("restframe")
+
+                        # custom adjustment: build fixed restframes
+                        self.build_combinations("fixed_restframe")
 
                 with tf.name_scope("boost"):
                     self.build_boost()
@@ -390,7 +407,7 @@ class LBN(object):
         Builds the combination layers which are quite similiar for particles and rest frames. Hence,
         *prefix* must be either ``"particle"`` or ``"restframe"``.
         """
-        if prefix not in ("particle", "restframe"):
+        if prefix not in ("particle", "restframe", "fixed_restframe"):  # custom adjustment: added
             raise ValueError("unknown prefix '{}'".format(prefix))
 
         # name helper
@@ -453,7 +470,65 @@ class LBN(object):
                 raise ValueError("n_restframes ({}) must be identical to n_particles ({}) in boost"
                     " mode '{}'".format(self.n_restframes, self.n_particles, self.boost_mode))
 
-        # get the objects that are used to infer beta and gamma for the build the boost matrix,
+        def _build_boost(boost_mode, n_particles, particles, n_restframes, restframes_E,
+                restframes_pvec):
+            # to build the boost parameters, reshape E and p tensors so that batch and particle axes
+            # are merged, and once the Lambda matrix is built, this reshape is reverted again
+            # note: there might be more performant operations in future TF releases
+            E = tf.reshape(restframes_E, [-1, 1])
+            pvec = tf.reshape(restframes_pvec, [-1, 3])
+
+            # for the boost to work, E must always be larger than p
+            p = tf.reduce_sum(pvec**2., axis=1, keepdims=True)**0.5
+            E = tf.maximum(E, p + self.epsilon)
+
+            # determine the beta vectors
+            betavec = pvec / E
+
+            # determine the scalar beta and gamma values
+            beta = tf.sqrt(tf.reduce_sum(tf.square(pvec), axis=1)) / tf.squeeze(E, axis=-1)
+            gamma = 1. / tf.sqrt(1. - tf.square(beta) + self.epsilon)
+            gamma = tf.maximum(gamma, tf.ones_like(gamma))
+
+            # the e vector, (1, -betavec / beta)^T
+            beta = tf.expand_dims(beta, axis=-1)
+            e = tf.expand_dims(tf.concat([tf.ones_like(E), -betavec / (beta + self.epsilon)],
+                axis=-1), axis=-1)
+            e_T = tf.transpose(e, perm=[0, 2, 1])
+
+            # finally, the boost matrix
+            beta = tf.expand_dims(beta, axis=-1)
+            gamma = tf.reshape(gamma, [-1, 1, 1])
+            Lambda = self.I + (self.U + gamma) * ((self.U + 1) * beta - self.U) * tf.matmul(e, e_T)
+
+            # revert the merging of batch and particle axes
+            Lambda = tf.reshape(Lambda, [-1, n_restframes, 4, 4])
+
+            # prepare particles for matmul
+            particles = tf.reshape(particles, [-1, n_particles, 4, 1])
+
+            # Lambda and particles need to be updated for PRODUCT and COMBINATIONS boosting
+            if boost_mode in (self.PRODUCT, self.COMBINATIONS):
+                # two approaches are possible
+                # a) tile Lambda while repeating particles
+                # b) batched gather using tiled and repeated indices
+                # go with b) for the moment since diagonal entries can be removed before the matmul
+                l_indices = np.tile(np.arange(n_restframes), n_particles)
+                p_indices = np.repeat(np.arange(n_particles), n_restframes)
+
+                # remove indices that would lead to diagonal entries for COMBINATIONS boosting
+                if boost_mode == self.COMBINATIONS:
+                    no_diag = np.hstack((triu_range(n_particles), tril_range(n_particles)))
+                    l_indices = l_indices[no_diag]
+                    p_indices = p_indices[no_diag]
+
+                # update Lambda and particles
+                Lambda = tf.gather(Lambda, l_indices, axis=1)
+                particles = tf.gather(particles, p_indices, axis=1)
+
+            return Lambda, particles
+
+        # get the objects that are used to infer beta and gamma for the build the boost matrix
         if self.boost_mode == self.COMBINATIONS:
             restframes_E = self.particles_E
             restframes_pvec = self.particles_pvec
@@ -461,57 +536,9 @@ class LBN(object):
             restframes_E = self.restframes_E
             restframes_pvec = self.restframes_pvec
 
-        # to build the boost parameters, reshape E and p tensors so that batch and particle axes
-        # are merged, and once the Lambda matrix is built, this reshape is reverted again
-        # note: there might be more performant operations in future TF releases
-        E = tf.reshape(restframes_E, [-1, 1])
-        pvec = tf.reshape(restframes_pvec, [-1, 3])
-
-        # for the boost to work, E must always be larger than p
-        p = tf.reduce_sum(pvec**2., axis=1, keepdims=True)**0.5
-        E = tf.maximum(E, p + self.epsilon)
-
-        # determine the beta vectors
-        betavec = pvec / E
-
-        # determine the scalar beta and gamma values
-        beta = tf.sqrt(tf.reduce_sum(tf.square(pvec), axis=1)) / tf.squeeze(E, axis=-1)
-        gamma = 1. / tf.sqrt(1. - tf.square(beta) + self.epsilon)
-
-        # the e vector, (1, -betavec / beta)^T
-        beta = tf.expand_dims(beta, axis=-1)
-        e = tf.expand_dims(tf.concat([tf.ones_like(E), -betavec / beta], axis=-1), axis=-1)
-        e_T = tf.transpose(e, perm=[0, 2, 1])
-
-        # finally, the boost matrix
-        beta = tf.expand_dims(beta, axis=-1)
-        gamma = tf.reshape(gamma, [-1, 1, 1])
-        Lambda = self.I + (self.U + gamma) * ((self.U + 1) * beta - self.U) * tf.matmul(e, e_T)
-
-        # revert the merging of batch and particle axes
-        Lambda = tf.reshape(Lambda, [-1, self.n_restframes, 4, 4])
-
-        # prepare particles for matmul
-        particles = tf.reshape(self.particles, [-1, self.n_particles, 4, 1])
-
-        # Lambda and particles need to be updated for PRODUCT and COMBINATIONS boosting
-        if self.boost_mode in (self.PRODUCT, self.COMBINATIONS):
-            # two approaches are possible
-            # a) tile Lambda while repeating particles
-            # b) batched gather using tiled and repeated indices
-            # go with b) for the moment since diagonal entries can be removed before the matmul
-            l_indices = np.tile(np.arange(self.n_restframes), self.n_particles)
-            p_indices = np.repeat(np.arange(self.n_particles), self.n_restframes)
-
-            # remove indices that would lead to diagonal entries for COMBINATIONS boosting
-            if self.boost_mode == self.COMBINATIONS:
-                no_diag = np.hstack((triu_range(self.n_particles), tril_range(self.n_particles)))
-                l_indices = l_indices[no_diag]
-                p_indices = p_indices[no_diag]
-
-            # update Lambda and particles
-            Lambda = tf.gather(Lambda, l_indices, axis=1)
-            particles = tf.gather(particles, p_indices, axis=1)
+        # normal boost configuration
+        Lambda, particles = _build_boost(self.boost_mode, self.n_particles, self.particles,
+            self.n_restframes, restframes_E, restframes_pvec)
 
         # store the final boost matrix
         self.Lambda = Lambda
@@ -521,6 +548,20 @@ class LBN(object):
 
         # remove the last dimension resulting from multiplication and save
         self.boosted_particles = tf.squeeze(boosted_particles, axis=-1, name="boosted_particles")
+
+        # custom adjustment: add product boosting with the fixed restframes
+        custom_Lambda, custom_particles = _build_boost(self.PRODUCT, self.n_particles,
+            self.particles, self.fixed_restframe_weights.shape[1], self.fixed_restframes_E,
+            self.fixed_restframes_pvec)
+        custom_boosted_particles = tf.matmul(custom_Lambda, custom_particles)
+        custom_boosted_particles = tf.squeeze(custom_boosted_particles, axis=-1,
+            name="boosted_particles")
+        self.custom_Lambda = custom_Lambda
+        self.custom_particles = custom_particles
+        self.custom_boosted_particles = custom_boosted_particles
+        # concatenate
+        self.boosted_particles = tf.concat([self.boosted_particles, custom_boosted_particles],
+            axis=1)
 
     def build_auxiliary(self):
         """
@@ -543,7 +584,7 @@ class LBN(object):
         externally produced features that are concatenated with the built features.
         """
         if not features:
-           features = self.DEFAULT_FEATURES
+            features = self.DEFAULT_FEATURES
 
         symbolic = _is_symbolic(self.inputs)
 
