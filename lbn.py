@@ -242,7 +242,7 @@ class LBN(object):
         # prevent building more than once
         if self.built:
             return self._op
-        
+
         # fallback to default features
         if not features:
             features = self.DEFAULT_FEATURES
@@ -477,10 +477,12 @@ class LBN(object):
         # determine the scalar beta and gamma values
         beta = tf.sqrt(tf.reduce_sum(tf.square(pvec), axis=1)) / tf.squeeze(E, axis=-1)
         gamma = 1. / tf.sqrt(1. - tf.square(beta) + self.epsilon)
+        gamma = tf.maximum(gamma, tf.ones_like(gamma))
 
         # the e vector, (1, -betavec / beta)^T
         beta = tf.expand_dims(beta, axis=-1)
-        e = tf.expand_dims(tf.concat([tf.ones_like(E), -betavec / beta], axis=-1), axis=-1)
+        e = tf.expand_dims(tf.concat([tf.ones_like(E), -betavec / (beta + self.epsilon)], axis=-1),
+            axis=-1)
         e_T = tf.transpose(e, perm=[0, 2, 1])
 
         # finally, the boost matrix
