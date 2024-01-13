@@ -545,7 +545,7 @@ class LBN(object):
         externally produced features that are concatenated with the built features.
         """
         if not features:
-           features = self.DEFAULT_FEATURES
+            features = self.DEFAULT_FEATURES
 
         symbolic = _is_symbolic(self.inputs)
 
