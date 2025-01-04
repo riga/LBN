@@ -6,7 +6,7 @@ TensorFlow implementation of the Lorentz Boost Network (LBN). https://arxiv.org/
 
 
 __author__ = "Marcel Rieger"
-__copyright__ = "Copyright 2018-2021, Marcel Rieger"
+__copyright__ = "Copyright 2018-2025, Marcel Rieger"
 __license__ = "BSD"
 __credits__ = ["Martin Erdmann", "Erik Geiser", "Yannik Rath", "Marcel Rieger"]
 __contact__ = "https://github.com/riga/LBN"
