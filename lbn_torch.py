@@ -10,6 +10,8 @@ __status__ = "Development"
 __version__ = "1.2.2"
 __all__ = ["LBN"]
 
+from typing import Sequence
+
 import torch
 
 
@@ -27,7 +29,16 @@ class LBN(torch.nn.Module):
 
     DEFAULT_FEATURES = ["e", "pt", "eta", "phi", "m", "pair_cos"]
 
-    def __init__(self, N=10, M=5, *, features=None, weight_init_scale=1.0, clip_weights=False, eps=1.0e-5) -> None:
+    def __init__(
+        self,
+        N: int = 10,
+        M: int = 5,
+        *,
+        features: Sequence[str] | None = None,
+        weight_init_scale: float | int = 1.0,
+        clip_weights: bool = False,
+        eps: float = 1.0e-5,
+    ) -> None:
         super().__init__()
 
         # validate features
@@ -56,6 +67,16 @@ class LBN(torch.nn.Module):
         # randomly initialized weights for projections
         self.particle_w = torch.nn.Parameter(torch.rand(N, M) * weight_init_scale)
         self.restframe_w = torch.nn.Parameter(torch.rand(N, M) * weight_init_scale)
+
+    def __repr__(self) -> str:
+        params = {
+            "N": self.N,
+            "M": self.M,
+            "features": ",".join(self.features),
+            "clip": self.clip_weights,
+        }
+        params_str = ", ".join(f"{k}={v}" for k, v in params.items())
+        return f"{self.__class__.__name__}({params_str}, {hex(id(self))})"
 
     def forward(self, e: torch.Tensor, px: torch.Tensor, py: torch.Tensor, pz: torch.Tensor) -> torch.Tensor:
         # e, px, py, pz: (B, N)
