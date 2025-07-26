@@ -31,8 +31,8 @@ class LBN(torch.nn.Module):
 
     def __init__(
         self,
-        N: int = 10,
-        M: int = 5,
+        N: int,
+        M: int,
         *,
         features: Sequence[str] | None = None,
         weight_init_scale: float | int = 1.0,
@@ -175,7 +175,7 @@ class LBN(torch.nn.Module):
             cache[feature] = f
             return f
 
-        # when not clipping weights, boosted vectors can contain have e < p
+        # when not clipping weights, boosted vectors can have e < p
         if not self.clip_weights:
             boosted_vecs[..., E] = torch.maximum(boosted_vecs[..., E], get("p") + self.eps)
 
