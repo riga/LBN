@@ -58,11 +58,9 @@ class LBN(torch.nn.Module):
 
         # constants
         self.register_buffer("I4", torch.eye(4, dtype=torch.float32))  # (4, 4)
-        U = torch.tensor([[-1, 0, 0, 0], *(3 * [[0, -1, -1, -1]])], dtype=torch.float32)
-        self.register_buffer("U", U)
-        self.register_buffer("U1", U + 1)
-        lower_tril = torch.tril(torch.ones(M, M, dtype=torch.bool), -1)
-        self.register_buffer("lower_tril", lower_tril)
+        self.register_buffer("U", torch.tensor([[-1, 0, 0, 0], *(3 * [[0, -1, -1, -1]])], dtype=torch.float32))
+        self.register_buffer("U1", self.U + 1)
+        self.register_buffer("lower_tril", torch.tril(torch.ones(M, M, dtype=torch.bool), -1))
 
         # randomly initialized weights for projections
         self.particle_w = torch.nn.Parameter(torch.rand(N, M) * weight_init_scale)
