@@ -76,6 +76,9 @@ class LBN(torch.nn.Module):
         params_str = ", ".join(f"{k}={v}" for k, v in params.items())
         return f"{self.__class__.__name__}({params_str}, {hex(id(self))})"
 
+    def update_boosted_vectors(self, boosted_vecs: torch.Tensor) -> torch.Tensor:
+        return boosted_vecs
+
     def forward(self, e: torch.Tensor, px: torch.Tensor, py: torch.Tensor, pz: torch.Tensor) -> torch.Tensor:
         # e, px, py, pz: (B, N)
         E, PX, PY, PZ = range(4)
@@ -120,6 +123,9 @@ class LBN(torch.nn.Module):
 
         # apply boosting
         boosted_vecs = (Lambda @ particle_vecs[..., None])[..., 0]
+
+        # hook to update boosted vectors if desired
+        boosted_vecs = self.update_boosted_vectors(boosted_vecs)
 
         # cached feature provision
         cache = {}
