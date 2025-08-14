@@ -76,6 +76,12 @@ class LBN(torch.nn.Module):
         params_str = ", ".join(f"{k}={v}" for k, v in params.items())
         return f"{self.__class__.__name__}({params_str}, {hex(id(self))})"
 
+    def update_particle_weights(self, w: torch.Tensor) -> torch.Tensor:
+        return w
+
+    def update_restframe_weights(self, w: torch.Tensor) -> torch.Tensor:
+        return w
+
     def update_boosted_vectors(self, boosted_vecs: torch.Tensor) -> torch.Tensor:
         return boosted_vecs
 
@@ -86,9 +92,11 @@ class LBN(torch.nn.Module):
         # stack 4-vectors
         input_vecs = torch.stack((e, px, py, pz), dim=1)  # (B, 4, N)
 
+        # optionally update particle and restframe weights
+        particle_w = self.update_particle_weights(self.particle_w)
+        restframe_w = self.update_restframe_weights(self.restframe_w)
+
         # optionally clip weights to prevent them going negative
-        particle_w = self.particle_w
-        restframe_w = self.restframe_w
         if self.clip_weights:
             particle_w = torch.clamp(particle_w, min=0.0)
             restframe_w = torch.clamp(restframe_w, min=0.0)
