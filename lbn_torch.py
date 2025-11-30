@@ -76,6 +76,19 @@ class LBN(torch.nn.Module):
         params_str = ", ".join(f"{k}={v}" for k, v in params.items())
         return f"{self.__class__.__name__}({params_str}, {hex(id(self))})"
 
+    @property
+    def out_features(self) -> int:
+        # determine number of pair-wise feature projections
+        n_pair = sum(1 for f in self.features if f.startswith("pair_"))
+
+        # compute output dimension
+        n = (
+            (len(self.features) - n_pair) * self.M +
+            n_pair * (self.M**2 - M) // 2
+        )
+
+        return n
+
     def update_particle_weights(self, w: torch.Tensor) -> torch.Tensor:
         return w
 
@@ -85,12 +98,30 @@ class LBN(torch.nn.Module):
     def update_boosted_vectors(self, boosted_vecs: torch.Tensor) -> torch.Tensor:
         return boosted_vecs
 
-    def forward(self, e: torch.Tensor, px: torch.Tensor, py: torch.Tensor, pz: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        e: torch.Tensor,
+        px: torch.Tensor | None = None,
+        py: torch.Tensor | None = None,
+        pz: torch.Tensor | None = None,
+        /,
+    ) -> torch.Tensor:
         # e, px, py, pz: (B, N)
         E, PX, PY, PZ = range(4)
 
-        # stack 4-vectors
-        input_vecs = torch.stack((e, px, py, pz), dim=1)  # (B, 4, N)
+        # handle input
+        # all arguments are given, check shapes and stack them, otherwise e must be already stacked
+        if (n_missing := [px, py, pz].count(None)) == 3:
+            # only e provided
+            if e.dim != 3 or tuple(e.shape[1:]) != (4, self.N):
+                raise Exception(f"input four-vectors have wrong shape {tuple(e.shape)}, expected (B, 4, N)")
+            input_vecs = e  # (B, 4, N)
+        elif n_missing == 0:
+            # all arguments provided, stack 4-vectors
+            input_vecs = torch.stack((e, px, py, pz), dim=1)  # (B, 4, N)
+            pass
+        else:
+            raise Exception(f"forward() expects either 1 or 4 arguments, got {4 - n_missing}")
 
         # optionally update particle and restframe weights
         particle_w = self.update_particle_weights(self.particle_w)
