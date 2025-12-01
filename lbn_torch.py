@@ -144,10 +144,18 @@ class LBN(torch.nn.Module):
         restframe_vecs = restframe_vecs.permute(0, 2, 1)
 
         # regularize vectors such that e > p
-        particle_p = torch.sum(particle_vecs[..., PX:]**2, dim=-1)**0.5  # (B, M)
-        particle_vecs[..., E] = torch.maximum(particle_vecs[..., E], particle_p + self.eps)
-        restframe_p = torch.sum(restframe_vecs[..., PX:]**2, dim=-1)**0.5  # (B, M)
-        restframe_vecs[..., E] = torch.maximum(restframe_vecs[..., E], restframe_p + self.eps)
+        particle_pvecs = particle_vecs[..., PX:]
+        particle_p = torch.sum(particle_pvecs**2, dim=-1)**0.5  # (B, M)
+        particle_vecs = torch.concat(
+            [torch.maximum(particle_vecs[..., E], particle_p + self.eps)[..., None], particle_pvecs],
+            dim=2
+        )
+        restframe_pvecs = restframe_vecs[..., PX:]
+        restframe_p = torch.sum(restframe_pvecs**2, dim=-1)**0.5  # (B, M)
+        restframe_vecs = torch.concat(
+            [torch.maximum(restframe_vecs[..., E], restframe_p + self.eps)[..., None], restframe_pvecs],
+            dim=2
+        )
 
         # create boost objects
         restframe_m = (restframe_vecs[..., E]**2 - restframe_p**2)**0.5  # (B, M)
@@ -196,7 +204,7 @@ class LBN(torch.nn.Module):
             elif feature == "p":
                 f = get("p2")**0.5
             elif feature == "eta":
-                f = torch.atanh(get("pz") / get("p"))
+                f = torch.atanh(torch.clamp(get("pz") / get("p"), min=self.eps - 1.0, max=1.0 - self.eps))
             elif feature == "phi":
                 f = torch.atan2(get("py"), get("px"))
             elif feature == "m":
