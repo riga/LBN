@@ -60,11 +60,14 @@ class LBN(torch.nn.Module):
         self.I4: torch.Tensor
         self.U: torch.Tensor
         self.U1: torch.Tensor
-        self.lower_tril: torch.Tensor
+        self.lower_tril_indices: torch.Tensor
         self.register_buffer("I4", torch.eye(4, dtype=torch.float32))  # (4, 4)
         self.register_buffer("U", torch.tensor([[-1, 0, 0, 0], *(3 * [[0, -1, -1, -1]])], dtype=torch.float32))
         self.register_buffer("U1", self.U + 1)
-        self.register_buffer("lower_tril", torch.tril(torch.ones(M, M, dtype=torch.bool), -1))
+        self.register_buffer(
+            "lower_tril_indices",
+            torch.arange(M**2).reshape((M, M))[torch.tril(torch.ones(M, M, dtype=torch.bool), -1)],
+        )
 
         # randomly initialized weights for projections
         self.particle_w = torch.nn.Parameter(torch.rand(N, M) * weight_init_scale)
@@ -147,14 +150,20 @@ class LBN(torch.nn.Module):
         particle_pvecs = particle_vecs[..., PX:]
         particle_p = torch.sum(particle_pvecs**2, dim=-1)**0.5  # (B, M)
         particle_vecs = torch.concat(
-            [torch.maximum(particle_vecs[..., E], particle_p + self.eps)[..., None], particle_pvecs],
-            dim=2
+            [
+                torch.maximum(particle_vecs[..., E], particle_p + self.eps)[..., None],
+                particle_pvecs,
+            ],
+            dim=2,
         )
         restframe_pvecs = restframe_vecs[..., PX:]
         restframe_p = torch.sum(restframe_pvecs**2, dim=-1)**0.5  # (B, M)
         restframe_vecs = torch.concat(
-            [torch.maximum(restframe_vecs[..., E], restframe_p + self.eps)[..., None], restframe_pvecs],
-            dim=2
+            [
+                torch.maximum(restframe_vecs[..., E], restframe_p + self.eps)[..., None],
+                restframe_pvecs,
+            ],
+            dim=2,
         )
 
         # create boost objects
@@ -215,15 +224,15 @@ class LBN(torch.nn.Module):
                 f = (
                     (boosted_pvecs @ boosted_pvecs.transpose(1, 2)) /
                     (boosted_p[..., None] @ boosted_p[:, None, :])
-                )[..., self.lower_tril]  # (B, (M**2-M)/2)
+                ).flatten(start_dim=1)[..., self.lower_tril_indices]  # (B, (M**2-M)/2)
             elif feature == "pair_dr":
                 boosted_phi = get("phi")
                 boosted_eta = get("eta")
                 boosted_dphi = abs(boosted_phi[..., None] - boosted_phi[:, None, :])  # (B, M, M)
-                boosted_dphi = boosted_dphi[..., self.lower_tril]  # (B, (M**2-M)/2)
+                boosted_dphi = boosted_dphi.flatten(start_dim=1)[..., self.lower_tril_indices]  # (B, (M**2-M)/2)
                 boosted_dphi = torch.where(boosted_dphi > torch.pi, 2 * torch.pi - boosted_dphi, boosted_dphi)
                 boosted_deta = boosted_eta[..., None] - boosted_eta[:, None, :]  # (B, M, M)
-                boosted_deta = boosted_deta[..., self.lower_tril]  # (B, (M**2-M)/2)
+                boosted_deta = boosted_deta.flatten(start_dim=1)[..., self.lower_tril_indices]  # (B, (M**2-M)/2)
                 f = (boosted_dphi**2 + boosted_deta**2)**0.5
             else:
                 raise RuntimeError(f"unknown feature '{feature}'")
@@ -233,7 +242,13 @@ class LBN(torch.nn.Module):
 
         # when not clipping weights, boosted vectors can have e < p
         if not self.clip_weights:
-            boosted_vecs[..., E] = torch.maximum(boosted_vecs[..., E], get("p") + self.eps)
+            boosted_vecs = torch.concat(
+                [
+                    torch.maximum(boosted_vecs[..., E], get("p") + self.eps)[..., None],
+                    boosted_vecs[..., PX:],
+                ],
+                dim=2,
+            )
 
         # collect and combine features
         features = torch.cat([get(feature) for feature in self.features], dim=1)  # (B, F)
