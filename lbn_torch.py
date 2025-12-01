@@ -88,7 +88,7 @@ class LBN(torch.nn.Module):
         # compute output dimension
         n = (
             (len(self.features) - n_pair) * self.M +
-            n_pair * (self.M**2 - M) // 2
+            n_pair * (self.M**2 - self.M) // 2
         )
 
         return n
