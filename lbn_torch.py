@@ -57,6 +57,10 @@ class LBN(torch.nn.Module):
         self.eps = eps
 
         # constants
+        self.I4: torch.Tensor
+        self.U: torch.Tensor
+        self.U1: torch.Tensor
+        self.lower_tril: torch.Tensor
         self.register_buffer("I4", torch.eye(4, dtype=torch.float32))  # (4, 4)
         self.register_buffer("U", torch.tensor([[-1, 0, 0, 0], *(3 * [[0, -1, -1, -1]])], dtype=torch.float32))
         self.register_buffer("U1", self.U + 1)
@@ -113,12 +117,12 @@ class LBN(torch.nn.Module):
         # all arguments are given, check shapes and stack them, otherwise e must be already stacked
         if (n_missing := [px, py, pz].count(None)) == 3:
             # only e provided
-            if e.dim != 3 or tuple(e.shape[1:]) != (4, self.N):
+            if e.ndim != 3 or tuple(e.shape[1:]) != (4, self.N):
                 raise Exception(f"input four-vectors have wrong shape {tuple(e.shape)}, expected (B, 4, N)")
             input_vecs = e  # (B, 4, N)
         elif n_missing == 0:
-            # all arguments provided, stack 4-vectors
-            input_vecs = torch.stack((e, px, py, pz), dim=1)  # (B, 4, N)
+            # all arguments provided, stack 4-vectors to (B, 4, N)
+            input_vecs = torch.stack((e, px, py, pz), dim=1)  # type: ignore[arg-type]
             pass
         else:
             raise Exception(f"forward() expects either 1 or 4 arguments, got {4 - n_missing}")
@@ -167,7 +171,8 @@ class LBN(torch.nn.Module):
         boosted_vecs = self.update_boosted_vectors(boosted_vecs)
 
         # cached feature provision
-        cache = {}
+        cache: dict[str, torch.Tensor] = {}
+
         def get(feature: str) -> torch.Tensor:
             # check cache first
             if feature in cache:
