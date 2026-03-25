@@ -11,3 +11,4 @@ build
 dist
 data
 tmp
+.python-version
