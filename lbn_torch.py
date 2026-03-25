@@ -10,6 +10,7 @@ __status__ = "Development"
 __version__ = "1.2.2"
 __all__ = ["LBN"]
 
+import functools
 from typing import Sequence
 
 import torch
@@ -83,15 +84,33 @@ class LBN(torch.nn.Module):
         params_str = ", ".join(f"{k}={v}" for k, v in params.items())
         return f"{self.__class__.__name__}({params_str}, {hex(id(self))})"
 
-    @property
+    @functools.cached_property
+    def M_dynamic(self) -> int:
+        # the true number of output particles can be altered by the update_{particle,restframe}_weights hooks, so call
+        # these hooks once to determine the actual output shape
+        dummy_w = torch.rand(self.N, self.M)
+        particle_w = self.update_particle_weights(dummy_w)
+        restframe_w = self.update_restframe_weights(dummy_w)
+
+        # dimensions must match
+        if particle_w.shape != restframe_w.shape:
+            raise RuntimeError(
+                f"update_particle_weights and update_restframe_weights must return tensors of the same shape, got "
+                f"{particle_w.shape} and {restframe_w.shape}",
+            )
+
+        return particle_w.shape[1]
+
+    @functools.cached_property
     def out_features(self) -> int:
         # determine number of pair-wise feature projections
         n_pair = sum(1 for f in self.features if f.startswith("pair_"))
 
         # compute output dimension
+        M = self.M_dynamic
         n = (
-            (len(self.features) - n_pair) * self.M +
-            n_pair * (self.M**2 - self.M) // 2
+            (len(self.features) - n_pair) * M +
+            n_pair * (M**2 - M) // 2
         )
 
         return n
