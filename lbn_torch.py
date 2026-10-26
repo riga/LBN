@@ -124,6 +124,10 @@ class LBN(torch.nn.Module):
     def update_boosted_vectors(self, boosted_vecs: torch.Tensor) -> torch.Tensor:
         return boosted_vecs
 
+    def _sqrt(self, x: torch.Tensor) -> torch.Tensor:
+        # clamp to eps to prevent nan values for negative arguments and infinite gradients at zero
+        return torch.clamp(x, min=self.eps)**0.5
+
     def forward(
         self,
         e: torch.Tensor,
@@ -167,7 +171,7 @@ class LBN(torch.nn.Module):
 
         # regularize vectors such that e > p
         particle_pvecs = particle_vecs[..., PX:]
-        particle_p = torch.sum(particle_pvecs**2, dim=-1)**0.5  # (B, M)
+        particle_p = self._sqrt(torch.sum(particle_pvecs**2, dim=-1))  # (B, M)
         particle_vecs = torch.concat(
             [
                 torch.maximum(particle_vecs[..., E], particle_p + self.eps)[..., None],
@@ -176,7 +180,7 @@ class LBN(torch.nn.Module):
             dim=2,
         )
         restframe_pvecs = restframe_vecs[..., PX:]
-        restframe_p = torch.sum(restframe_pvecs**2, dim=-1)**0.5  # (B, M)
+        restframe_p = self._sqrt(torch.sum(restframe_pvecs**2, dim=-1))  # (B, M)
         restframe_vecs = torch.concat(
             [
                 torch.maximum(restframe_vecs[..., E], restframe_p + self.eps)[..., None],
@@ -186,7 +190,7 @@ class LBN(torch.nn.Module):
         )
 
         # create boost objects
-        restframe_m = (restframe_vecs[..., E]**2 - restframe_p**2)**0.5  # (B, M)
+        restframe_m = self._sqrt(restframe_vecs[..., E]**2 - restframe_p**2)  # (B, M)
         gamma = restframe_vecs[..., E] / restframe_m  # (B, M)
         beta = restframe_p / restframe_vecs[..., E]  # (B, M)
         beta_vecs = restframe_vecs[..., PX:] / restframe_vecs[..., E, None]  # (B, M, 3)
@@ -226,17 +230,17 @@ class LBN(torch.nn.Module):
             if feature == "pt2":
                 f = get("px")**2 + get("py")**2
             elif feature == "pt":
-                f = get("pt2")**0.5
+                f = self._sqrt(get("pt2"))
             elif feature == "p2":
                 f = get("pt2") + get("pz")**2
             elif feature == "p":
-                f = get("p2")**0.5
+                f = self._sqrt(get("p2"))
             elif feature == "eta":
                 f = torch.atanh(torch.clamp(get("pz") / get("p"), min=self.eps - 1.0, max=1.0 - self.eps))
             elif feature == "phi":
                 f = torch.atan2(get("py"), get("px"))
             elif feature == "m":
-                f = (torch.maximum(get("e")**2, get("p2")) - get("p2"))**0.5
+                f = self._sqrt(get("e")**2 - get("p2"))
             elif feature == "pair_cos":
                 boosted_pvecs = boosted_vecs[..., PX:]  # (B, M, 3)
                 boosted_p = get("p")
@@ -252,7 +256,7 @@ class LBN(torch.nn.Module):
                 boosted_dphi = torch.where(boosted_dphi > torch.pi, 2 * torch.pi - boosted_dphi, boosted_dphi)
                 boosted_deta = boosted_eta[..., None] - boosted_eta[:, None, :]  # (B, M, M)
                 boosted_deta = boosted_deta.flatten(start_dim=1)[..., self.lower_tril_indices]  # (B, (M**2-M)/2)
-                f = (boosted_dphi**2 + boosted_deta**2)**0.5
+                f = self._sqrt(boosted_dphi**2 + boosted_deta**2)
             else:
                 raise RuntimeError(f"unknown feature '{feature}'")
             # cache and return
