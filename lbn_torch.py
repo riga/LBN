@@ -236,7 +236,7 @@ class LBN(torch.nn.Module):
             elif feature == "phi":
                 f = torch.atan2(get("py"), get("px"))
             elif feature == "m":
-                f = (torch.maximum(get("e")**2, get("p2")) - get("p"))**0.5
+                f = (torch.maximum(get("e")**2, get("p2")) - get("p2"))**0.5
             elif feature == "pair_cos":
                 boosted_pvecs = boosted_vecs[..., PX:]  # (B, M, 3)
                 boosted_p = get("p")
