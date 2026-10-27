@@ -39,6 +39,7 @@ class LBN(torch.nn.Module):
         weight_init_scale: float | int = 1.0,
         clip_weights: bool = False,
         eps: float = 1.0e-5,
+        mass_eps: float = 1.0e-4,
     ) -> None:
         super().__init__()
 
@@ -56,6 +57,7 @@ class LBN(torch.nn.Module):
         self.weight_init_scale = weight_init_scale
         self.clip_weights = clip_weights
         self.eps = eps
+        self.mass_eps = mass_eps
 
         # constants
         self.I4: torch.Tensor
@@ -169,32 +171,30 @@ class LBN(torch.nn.Module):
         particle_vecs = particle_vecs.permute(0, 2, 1)
         restframe_vecs = restframe_vecs.permute(0, 2, 1)
 
-        # regularize vectors such that e > p
+        # regularize vectors such that e >= p (relative, i.e. valid at any input scale)
         particle_pvecs = particle_vecs[..., PX:]
         particle_p = self._sqrt(torch.sum(particle_pvecs**2, dim=-1))  # (B, M)
         particle_vecs = torch.concat(
             [
-                torch.maximum(particle_vecs[..., E], particle_p + self.eps)[..., None],
+                torch.maximum(particle_vecs[..., E], particle_p)[..., None],
                 particle_pvecs,
             ],
             dim=2,
         )
         restframe_pvecs = restframe_vecs[..., PX:]
         restframe_p = self._sqrt(torch.sum(restframe_pvecs**2, dim=-1))  # (B, M)
-        restframe_vecs = torch.concat(
-            [
-                torch.maximum(restframe_vecs[..., E], restframe_p + self.eps)[..., None],
-                restframe_pvecs,
-            ],
-            dim=2,
-        )
+        # the absolute floor on e only matters for exactly vanishing vectors (keeps gamma = 1 there)
+        restframe_e = torch.clamp(torch.maximum(restframe_vecs[..., E], restframe_p), min=self.eps)  # (B, M)
+        restframe_vecs = torch.concat([restframe_e[..., None], restframe_pvecs], dim=2)
 
         # create boost objects
-        restframe_m = self._sqrt(restframe_vecs[..., E]**2 - restframe_p**2)  # (B, M)
-        gamma = restframe_vecs[..., E] / restframe_m  # (B, M)
-        beta = restframe_p / restframe_vecs[..., E]  # (B, M)
-        beta_vecs = restframe_vecs[..., PX:] / restframe_vecs[..., E, None]  # (B, M, 3)
-        n_vecs = beta_vecs / beta[..., None]  # (B, M, 3)
+        # m^2 is regularized additively and relative to e^2 instead of being clamped: it is strictly positive, smooth,
+        # not subject to float32 cancellation for e ~ p, and gamma is bounded by 1 / sqrt(mass_eps)
+        restframe_m = ((1.0 + self.mass_eps) * restframe_e**2 - restframe_p**2)**0.5  # (B, M)
+        gamma = restframe_e / restframe_m  # (B, M)
+        beta = restframe_p / restframe_e  # (B, M)
+        # unit direction from the (floored) momentum directly, avoiding the beta_vecs / beta division
+        n_vecs = restframe_pvecs / restframe_p[..., None]  # (B, M, 3)
         e_vecs = torch.cat([torch.ones_like(n_vecs[..., :1]), -n_vecs], dim=-1)  # (B, M, 4)
 
         # build Lambda
@@ -238,7 +238,10 @@ class LBN(torch.nn.Module):
             elif feature == "eta":
                 f = torch.atanh(torch.clamp(get("pz") / get("p"), min=self.eps - 1.0, max=1.0 - self.eps))
             elif feature == "phi":
-                f = torch.atan2(get("py"), get("px"))
+                # atan2(0, 0) is 0 in the forward pass but has a nan gradient, so replace px by 1 where pt vanishes
+                # (torch.where after atan2 would still propagate the nan)
+                px_safe = torch.where(get("pt2") < self.eps, torch.ones_like(get("px")), get("px"))
+                f = torch.atan2(get("py"), px_safe)
             elif feature == "m":
                 f = self._sqrt(get("e")**2 - get("p2"))
             elif feature == "pair_cos":
@@ -267,7 +270,7 @@ class LBN(torch.nn.Module):
         if not self.clip_weights:
             boosted_vecs = torch.concat(
                 [
-                    torch.maximum(boosted_vecs[..., E], get("p") + self.eps)[..., None],
+                    torch.maximum(boosted_vecs[..., E], get("p"))[..., None],
                     boosted_vecs[..., PX:],
                 ],
                 dim=2,
