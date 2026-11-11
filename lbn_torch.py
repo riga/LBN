@@ -22,13 +22,19 @@ class LBN(torch.nn.Module):
     For details and nomenclature see https://arxiv.org/pdf/1812.09722.
     """
 
-    KNOWN_FEATURES = [
-        "e", "px", "py", "pz",
-        "pt", "eta", "phi", "m",
-        "pair_cos", "pair_dr",
-    ]
+    KNOWN_FEATURES = sum(
+        (
+            [f"{prefix}{f}" for f in [
+                "e", "px", "py", "pz",
+                "pt", "eta", "phi", "m",
+                "pair_cos", "pair_dr",
+            ]]
+            for prefix in ("", "log_", "log1p_")
+        ),
+        [],
+    )
 
-    DEFAULT_FEATURES = ["e", "pt", "eta", "phi", "m", "pair_cos"]
+    DEFAULT_FEATURES = ["log_e", "log_pt", "eta", "phi", "log_m", "pair_cos"]
 
     def __init__(
         self,
@@ -218,6 +224,10 @@ class LBN(torch.nn.Module):
             if feature in cache:
                 return cache[feature]
             # live feature access
+            if feature.startswith("log_"):
+                return torch.log(get(feature[4:]))
+            if feature.startswith("log1p_"):
+                return torch.log1p(get(feature[6:]))
             if feature == "e":
                 return boosted_vecs[..., E]
             if feature == "px":
